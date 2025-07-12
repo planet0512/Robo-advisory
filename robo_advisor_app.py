@@ -104,36 +104,41 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 # <<< FEATURE: ML MARKET REGIME DETECTION (HMM) >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     """
     Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
     """
-    spy = yf.download("SPY", start=start_date, progress=False)
+    # Download raw data which may have multi-level columns
+    spy_raw = yf.download("SPY", start=start_date, progress=False)
+
+    # <<< FIX: Flatten the column index by selecting only 'Close' into a new DataFrame >>>
+    # This resolves the MergeError. Using .copy() is good practice here.
+    spy = spy_raw[['Close']].copy()
+
     # The 'returns' DataFrame will have one less row than 'spy'
     returns = np.log(spy['Close']).diff().dropna()
-
+    
     # Fit the HMM model on the returns data
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
-    model.fit(returns.to_numpy().reshape(-1, 1)) # Use numpy array for fitting
+    model.fit(returns.to_numpy().reshape(-1, 1))
     hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
-
+    
     # Identify which state is high volatility vs. low volatility
-    # We assume the state with the higher mean return is the "Low Volatility" regime
     means = model.means_.flatten()
     low_vol_state = np.argmax(means)
-
-    # <<< FIX: Create a new DataFrame for regimes with the correct index >>>
+    
     regime_df = pd.DataFrame({
         'regime': hidden_states,
         'regime_label': ['Low Volatility' if s == low_vol_state else 'High Volatility' for s in hidden_states]
     }, index=returns.index)
-
-    # <<< FIX: Join the regime data back to the original 'spy' DataFrame >>>
+    
+    # Now the join will work because both DataFrames have single-level columns
     spy_with_regimes = spy.join(regime_df['regime_label'])
-
+    
     # Forward-fill the first row which will be NaN after the join
     spy_with_regimes['regime_label'].ffill(inplace=True)
-
+    
     return spy_with_regimes[['Close', 'regime_label']]
 
 # Other financial functions (analyze_portfolio, run_monte_carlo, etc.) are here
