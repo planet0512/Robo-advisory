@@ -105,7 +105,7 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     spy = yf.download("SPY", start=start_date, progress=False)
-    returns = np.log(spy['Close']).diff().dropna().to_frame()
+    returns = np.log(spy['Close']).diff().dropna()
     
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
     model.fit(returns)
