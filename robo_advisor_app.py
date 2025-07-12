@@ -12,6 +12,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+import plotly.express as px
+
 
 # ======================================================================================
 # CONFIGURATION
@@ -184,7 +186,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             labels=weights.index,
             values=weights.values,
             hole=0.4,
-            marker_colors=go.colors.sequential.GnBu_r,
+            marker_colors=px.colors.sequential.GnBu_r,
             textinfo="label+percent"
         )
     )
