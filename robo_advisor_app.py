@@ -138,9 +138,9 @@ def optimize_portfolio(returns: pd.DataFrame, use_garch: bool = False) -> pd.Ser
         Sigma = returns.cov().to_numpy() * 252
     
     Sigma = 0.5 * (Sigma + Sigma.T)
+    P = cp.psd_wrap(Sigma)  # <<< FIX: Wrap the matrix to ensure it's treated as symmetric/PSD
     w = cp.Variable(len(mu))
-    risk = cp.quad_form(w, Sigma)
-    prob = cp.Problem(cp.Maximize(mu @ w - 0.5 * risk), [cp.sum(w) == 1, w >= 0])
+    risk = cp.quad_form(w, P)  # <<< FIX: Use the newly wrapped matrix P
     
     try:
         prob.solve(solver=cp.SCS) # Using SCS solver can be more robust
