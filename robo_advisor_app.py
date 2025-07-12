@@ -182,16 +182,18 @@ def backtest_portfolio(prices: pd.DataFrame, weights: pd.Series) -> pd.Series:
 def display_dashboard(username: str, portfolio: Dict[str, Any]):
     st.subheader(f"Welcome Back, {username.title()}!")
 
+    # --- Rebalance Check ---
     last_rebalanced_str = portfolio.get("last_rebalanced_date", "2000-01-01")
     last_rebalanced_date = dt.date.fromisoformat(last_rebalanced_str)
     days_since_rebalance = (dt.date.today() - last_rebalanced_date).days
 
-    if days_since_rebalance > 180:
+    if days_since_rebalance > 180: # 180 days ~ 6 months
         st.warning(f"**Time to Rebalance!** Your portfolio is over 6 months old.")
         if st.button("🔄 Rebalance Now", type="primary"):
             st.session_state.rebalance_now = True
             st.rerun()
 
+    # --- Core Metrics & Allocation ---
     st.write(f"Your recommended portfolio is **{portfolio['risk_profile']}**.")
     cols = st.columns(3)
     cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
@@ -199,28 +201,57 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
 
     weights = pd.Series(portfolio["weights"])
-    fig = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, marker_colors=px.colors.sequential.GnBu_r, textinfo="label+percent"))
-    fig.update_layout(showlegend=False, title_text="Portfolio Allocation", title_x=0.5)
-    st.plotly_chart(fig, use_container_width=True)
+    fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, marker_colors=px.colors.sequential.GnBu_r, textinfo="label+percent"))
+    fig_pie.update_layout(showlegend=False, title_text="Portfolio Allocation", title_x=0.5)
+    st.plotly_chart(fig_pie, use_container_width=True)
 
     st.markdown("---")
 
+    # --- <<< CODE RESTORED: MONTE CARLO FUTURE GROWTH SIMULATION >>> ---
     st.subheader("📈 Future Growth Simulation")
-    # ... (Monte Carlo UI remains the same)
+    sim_cols = st.columns([1, 3])
+    with sim_cols[0]:
+        initial_investment = st.number_input("Initial Investment ($)", min_value=1000, value=10000, step=1000, format="%d")
+        simulation_years = st.slider("Investment Horizon (Years)", min_value=1, max_value=30, value=10)
 
-    # --- <<< FEATURE: UI FOR BACKTESTING AND EFFICIENT FRONTIER >>> ---
+    sim_results = run_monte_carlo(
+        initial_value=initial_investment,
+        er=portfolio['metrics']['expected_return'],
+        vol=portfolio['metrics']['expected_volatility'],
+        years=simulation_years,
+        simulations=500
+    )
+    
+    final_values = sim_results.iloc[-1]
+    with sim_cols[1]:
+        fig_sim = go.Figure()
+        # Plot a subset of simulations for performance, e.g., first 100
+        fig_sim.add_traces([go.Scatter(x=sim_results.index / 252, y=sim_results[col], mode='lines', line_color='lightgrey', showlegend=False) for col in sim_results.columns[:100]])
+        # Plot key quantiles
+        fig_sim.add_traces([
+            go.Scatter(x=sim_results.index / 252, y=sim_results.quantile(q, axis=1), mode='lines', line=dict(width=3), name=f'{q*100:.0f}th Percentile') for q in [0.1, 0.5, 0.9]
+        ])
+        fig_sim.update_layout(
+            title_text=f"Projected Growth of ${initial_investment:,.0f} over {simulation_years} Years",
+            xaxis_title="Years",
+            yaxis_title="Portfolio Value ($)",
+            yaxis_tickformat="$,.0f"
+        )
+        st.plotly_chart(fig_sim, use_container_width=True)
+
+    st.info(f"After **{simulation_years} years**, your portfolio has a projected median value of **${final_values.median():,.0f}**.")
+    st.caption(f"There's a plausible range between **${final_values.quantile(0.1):,.0f}** (10th percentile) and **${final_values.quantile(0.9):,.0f}** (90th percentile).")
+
+
+    # --- Backtesting and Efficient Frontier ---
     st.markdown("---")
     st.subheader("🔍 Performance & Risk Analysis")
 
     prices = get_price_data(list(weights.index))
-    returns = prices.pct_change().dropna()
 
     with st.expander("Show Historical Performance Backtest"):
         st.write("This chart shows how your MPT-optimized portfolio would have performed historically against a simple, equal-weight portfolio.")
-        
-        # Create benchmark weights (equal weight)
         equal_weights = pd.Series([1/len(weights)] * len(weights), index=weights.index)
-        
         mpt_performance = backtest_portfolio(prices, weights)
         benchmark_performance = backtest_portfolio(prices, equal_weights)
         
@@ -232,7 +263,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
 
     with st.expander("Show Efficient Frontier Analysis"):
         st.write("The efficient frontier shows the set of optimal portfolios that offer the highest expected return for a given level of risk. Your portfolio is marked with a star.")
-        
+        returns = prices.pct_change().dropna()
         frontier_df = calculate_efficient_frontier(returns)
         
         fig_frontier = px.scatter(
@@ -240,13 +271,10 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             hover_data=['sharpe'], labels={'volatility': 'Annualized Volatility (Risk)', 'return': 'Annualized Return'},
             title='Efficient Frontier Analysis'
         )
-        # Add user's portfolio to the chart
         fig_frontier.add_trace(go.Scatter(
             x=[portfolio['metrics']['expected_volatility']],
             y=[portfolio['metrics']['expected_return']],
-            mode='markers',
-            marker=dict(color='red', size=15, symbol='star'),
-            name='Your Portfolio'
+            mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'
         ))
         st.plotly_chart(fig_frontier, use_container_width=True)
 
