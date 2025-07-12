@@ -344,7 +344,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         with indicator_cols[1]:
             st.write("**US Inflation Rate (YoY)**")
             cpi_data = get_cpi_data()
-            if cpi_data is not None: st.line
+            if cpi_data is not None: st.line_chart(cpi_data)
                 
 def display_questionnaire() -> Tuple[str, bool, Dict]:
     # (function is unchanged)
