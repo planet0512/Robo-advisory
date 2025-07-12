@@ -105,38 +105,39 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     """
     Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
     """
-    # Download raw data which may have multi-level columns
-    spy_raw = yf.download("SPY", start=start_date, progress=False)
+    # Download raw data which has a multi-level column index
+    spy_raw_data = yf.download("SPY", start=start_date, progress=False)
 
-    # <<< FIX: Flatten the column index by selecting only 'Close' into a new DataFrame >>>
-    # This resolves the MergeError. Using .copy() is good practice here.
-    spy = spy_raw[['Close']].copy()
+    # <<< FIX: Create a new, simple DataFrame with only the 'Close' column >>>
+    # This flattens the columns and resolves the MergeError.
+    spy_simple_df = spy_raw_data[['Close']].copy()
 
-    # The 'returns' DataFrame will have one less row than 'spy'
-    returns = np.log(spy['Close']).diff().dropna()
+    # The 'returns' DataFrame will have one less row
+    returns = np.log(spy_simple_df['Close']).diff().dropna()
     
-    # Fit the HMM model on the returns data
+    # Fit the HMM model
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
     model.fit(returns.to_numpy().reshape(-1, 1))
     hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
     
-    # Identify which state is high volatility vs. low volatility
+    # Identify regimes
     means = model.means_.flatten()
     low_vol_state = np.argmax(means)
     
+    # Create the regime DataFrame with the correct index
     regime_df = pd.DataFrame({
-        'regime': hidden_states,
         'regime_label': ['Low Volatility' if s == low_vol_state else 'High Volatility' for s in hidden_states]
     }, index=returns.index)
     
-    # Now the join will work because both DataFrames have single-level columns
-    spy_with_regimes = spy.join(regime_df['regime_label'])
+    # Join the results back to the simple DataFrame
+    spy_with_regimes = spy_simple_df.join(regime_df['regime_label'])
     
-    # Forward-fill the first row which will be NaN after the join
+    # Forward-fill the first row which will be NaN
     spy_with_regimes['regime_label'].ffill(inplace=True)
     
     return spy_with_regimes[['Close', 'regime_label']]
