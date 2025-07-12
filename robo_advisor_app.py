@@ -47,12 +47,21 @@ CRASH_SCENARIOS = {
 # ======================================================================================
 
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
     end_date = end_date or dt.date.today().isoformat()
     try:
-        prices = yf.download(tickers, start=start_date, end=end_date, progress=False)["Close"]
+        # <<< FIX: Enforce auto_adjust=True for consistent, clean data >>>
+        prices = yf.download(
+            tickers, 
+            start=start_date, 
+            end=end_date, 
+            progress=False, 
+            auto_adjust=True
+        )["Close"]
         return prices.ffill().dropna(axis=1, how="all") if not prices.empty else pd.DataFrame()
-    except Exception: return pd.DataFrame()
+    except Exception: 
+        return pd.DataFrame()
 
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_cpi_data(start_date="2010-01-01"):
