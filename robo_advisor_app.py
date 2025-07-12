@@ -1,35 +1,3 @@
-Of course. You've made two excellent observations: the **UI can be cleaner**, and more importantly, the **optimizer is not diversifying correctly**, leading to 100% allocation in a single ETF. This also explains why rebalancing shows no change.
-
-Let's fix both issues. The optimizer problem is critical, so we'll address that first.
-
------
-
-### \#\# 1. Fixing the Portfolio Optimizer
-
-The reason the optimizer is putting 100% into one asset is that our current formula doesn't properly penalize risk. It's simply picking the single asset with the best historical risk-adjusted return.
-
-To fix this, we'll introduce a **Risk Aversion** parameter. This tells the optimizer how much to penalize risk, forcing it to diversify based on the user's profile:
-
-  * **Conservative users** will have a high risk aversion, leading to a more diversified, lower-volatility portfolio.
-  * **Aggressive users** will have a low risk aversion, allowing for a more concentrated, higher-return portfolio.
-
-This will fix both the diversification and the rebalancing problems.
-
-### \#\# 2. Optimizing the User Interface (UI)
-
-To make the app cleaner and more professional, I will reorganize the entire dashboard into a series of **tabs**. This eliminates the long scroll and groups related information logically. The new layout will be:
-
-  * **Dashboard**: The main overview with key metrics, the allocation pie chart, and the rebalance prompt.
-  * **Future Projection**: The interactive Monte Carlo simulation.
-  * **Performance Analysis**: The Historical Backtest and Efficient Frontier charts.
-
------
-
-### \#\# The Updated Code
-
-Here is the complete, updated script with both the critical optimizer fix and the new tab-based UI.
-
-```python
 # robo_advisor_app.py
 # Final version with optimizer fix and tabbed UI.
 
@@ -378,4 +346,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
