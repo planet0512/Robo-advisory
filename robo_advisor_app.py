@@ -129,27 +129,40 @@ def optimize_portfolio(returns: pd.DataFrame, use_garch: bool = False) -> pd.Ser
     """
     mu = returns.mean().to_numpy() * 252
 
-    # <<< ML FEATURE: Use GARCH if toggled on >>>
     if use_garch:
         st.toast("Using GARCH model for risk forecast...", icon="🧠")
         Sigma = forecast_covariance_garch(returns).to_numpy()
     else:
         st.toast("Using historical model for risk...", icon="📜")
         Sigma = returns.cov().to_numpy() * 252
-    
-    Sigma = 0.5 * (Sigma + Sigma.T)
-    P = cp.psd_wrap(Sigma)  # <<< FIX: Wrap the matrix to ensure it's treated as symmetric/PSD
-    w = cp.Variable(len(mu))
-    risk = cp.quad_form(w, P)  # <<< FIX: Use the newly wrapped matrix P
-    
+
+    # --- Start of the corrected try/except block ---
     try:
-        prob.solve(solver=cp.SCS) # Using SCS solver can be more robust
-        if prob.status != cp.OPTIMAL: raise ValueError("Solver failed.")
+        # Enforce and wrap the covariance matrix for the solver
+        Sigma = 0.5 * (Sigma + Sigma.T)
+        P = cp.psd_wrap(Sigma)
+
+        # Define optimization variables and problem
+        w = cp.Variable(len(mu))
+        risk = cp.quad_form(w, P)
+        prob = cp.Problem(
+            cp.Maximize(mu @ w - 0.5 * risk),
+            [cp.sum(w) == 1, w >= 0]
+        )
+
+        # Solve the problem
+        prob.solve(solver=cp.SCS)
+        if prob.status != cp.OPTIMAL:
+            raise ValueError("Solver could not find an optimal solution.")
+
+        # Process and return the weights
         weights = pd.Series(w.value, index=returns.columns)
         weights[weights < 1e-4] = 0
         weights /= weights.sum()
         return weights
+
     except Exception as e:
+        # This will now catch the original, informative error
         st.error(f"Optimization failed: {e}")
         return None
 
