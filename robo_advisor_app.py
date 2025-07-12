@@ -4,7 +4,7 @@
 import json
 import datetime as dt
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 # <<< ML FEATURE: Add arch for GARCH models >>>
 from arch import arch_model
