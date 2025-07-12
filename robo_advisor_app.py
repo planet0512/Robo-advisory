@@ -106,41 +106,47 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     """
     Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
+    This version is robust against multi-level column issues from yfinance.
     """
-    # Download raw data which has a multi-level column index
+    # Download raw data
     spy_raw_data = yf.download("SPY", start=start_date, progress=False)
 
-    # <<< FIX: Create a new, simple DataFrame with only the 'Close' column >>>
-    # This flattens the columns and resolves the MergeError.
-    spy_simple_df = spy_raw_data[['Close']].copy()
+    # --- NEW, MORE ROBUST FIX ---
+    # Immediately select the 'Close' Series to work with simple data structures
+    spy_close_prices = spy_raw_data['Close']
 
-    # The 'returns' DataFrame will have one less row
-    returns = np.log(spy_simple_df['Close']).diff().dropna()
+    # Calculate returns from the 'Close' price Series
+    returns = np.log(spy_close_prices).diff().dropna()
     
-    # Fit the HMM model
+    # Fit the HMM model on the returns data
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
     model.fit(returns.to_numpy().reshape(-1, 1))
     hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
     
-    # Identify regimes
-    means = model.means_.flatten()
-    low_vol_state = np.argmax(means)
+    # Identify which state is high volatility vs. low volatility
+    vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
+    high_vol_state = np.argmax(vols)
     
     # Create the regime DataFrame with the correct index
     regime_df = pd.DataFrame({
-        'regime_label': ['Low Volatility' if s == low_vol_state else 'High Volatility' for s in hidden_states]
+        'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]
     }, index=returns.index)
     
-    # Join the results back to the simple DataFrame
-    spy_with_regimes = spy_simple_df.join(regime_df['regime_label'])
+    # --- NEW, MORE ROBUST FIX ---
+    # Build the final DataFrame from the simplified 'Close' price Series
+    final_df = pd.DataFrame(spy_close_prices)
+
+    # Join the regime labels. This is now a clean join between two single-level objects.
+    final_df = final_df.join(regime_df['regime_label'])
     
-    # Forward-fill the first row which will be NaN
-    spy_with_regimes['regime_label'].ffill(inplace=True)
+    # Forward-fill the first row which will be NaN after the join
+    final_df['regime_label'].ffill(inplace=True)
     
-    return spy_with_regimes[['Close', 'regime_label']]
+    return final_df[['Close', 'regime_label']]
 
 # Other financial functions (analyze_portfolio, run_monte_carlo, etc.) are here
 def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, float]:
