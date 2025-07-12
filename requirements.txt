@@ -6,3 +6,5 @@ plotly
 yfinance
 arch
 pandas-datareader
+hmmlearn
+scikit-learn
