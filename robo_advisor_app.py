@@ -196,6 +196,31 @@ def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, sim
         price_paths[t] = price_paths[t - 1] * daily_returns[t - 1]
 
     return pd.DataFrame(price_paths)
+@st.cache_data
+def calculate_efficient_frontier(returns: pd.DataFrame, num_portfolios: int = 2000):
+    """Generates random portfolios to visualize the efficient frontier."""
+    results = []
+    num_assets = len(returns.columns)
+    mean_returns = returns.mean() * 252
+    cov_matrix = returns.cov() * 252
+    
+    for _ in range(num_portfolios):
+        weights = np.random.random(num_assets)
+        weights /= np.sum(weights)
+        
+        ret = np.sum(mean_returns * weights)
+        vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+        sharpe = ret / vol
+        results.append([ret, vol, sharpe])
+        
+    return pd.DataFrame(results, columns=['return', 'volatility', 'sharpe'])
+
+@st.cache_data
+def backtest_portfolio(prices: pd.DataFrame, weights: pd.Series) -> pd.Series:
+    """Calculates the historical cumulative performance of a portfolio."""
+    returns = prices.pct_change().dropna()
+    portfolio_returns = returns.dot(weights)
+    return (1 + portfolio_returns).cumprod()
 
 # ======================================================================================
 # UI COMPONENTS
