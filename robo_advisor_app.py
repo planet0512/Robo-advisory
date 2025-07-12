@@ -1,5 +1,5 @@
 # robo_advisor_app.py
-# Final version with optimizer fix and tabbed UI.
+# Final, polished version with advanced benchmarking, user profile updates, and enhanced UI.
 
 import json
 import datetime as dt
@@ -20,23 +20,19 @@ import yfinance as yf
 # ======================================================================================
 
 st.set_page_config(
-    page_title="WealthFlow | Robo-Advisor",
+    page_title="WealthFlow | AI Advisor",
     page_icon="🤖",
     layout="wide",
 )
 
 PORTFOLIO_FILE = Path("user_portfolios.json")
 
-# <<< FIX: ADD RISK AVERSION FACTORS FOR DIVERSIFICATION >>>
-# Higher value = more risk aversion = more diversification
 RISK_AVERSION_FACTORS = {
     "Conservative": 4.0,
     "Balanced": 2.5,
     "Aggressive": 1.0,
 }
 
-# <<< UPDATE: Use a single, globally diversified asset list for all profiles >>>
-# This professional strategy is used by leading robo-advisors.
 MASTER_ASSET_LIST = [
     "VTI",  # U.S. Total Stock Market
     "VEA",  # Developed Markets (ex-US)
@@ -103,14 +99,12 @@ def forecast_covariance_garch(returns: pd.DataFrame) -> pd.DataFrame:
         residuals.append(res.std_resid)
         forecast = res.forecast(horizon=1)
         variances.append(forecast.variance.iloc[-1, 0])
-    
     corr_matrix = pd.concat(residuals, axis=1).corr()
     variances = np.array(variances) / (100**2)
     diag_vol = np.diag(np.sqrt(variances))
     cov_matrix = diag_vol @ corr_matrix @ diag_vol
     return pd.DataFrame(cov_matrix * 252, index=returns.columns, columns=returns.columns)
 
-# <<< FIX: PASS RISK_PROFILE TO OPTIMIZER TO USE RISK AVERSION FACTOR >>>
 def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool = False) -> pd.Series:
     mu = returns.mean().to_numpy() * 252
     if use_garch:
@@ -126,18 +120,13 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
     try:
         gamma = cp.Parameter(nonneg=True)
         gamma.value = RISK_AVERSION_FACTORS[risk_profile]
-        
         Sigma = 0.5 * (Sigma + Sigma.T)
         P = cp.psd_wrap(Sigma)
         w = cp.Variable(len(mu))
         risk = cp.quad_form(w, P)
-        
-        # <<< FINAL FIX: ADD MAX WEIGHT CONSTRAINT TO FORCE DIVERSIFICATION >>>
         max_weight = 0.35 
         constraints = [cp.sum(w) == 1, w >= 0, w <= max_weight]
-        
         prob = cp.Problem(cp.Maximize(mu @ w - 0.5 * gamma * risk), constraints)
-        
         prob.solve(solver=cp.SCS)
         if prob.status != cp.OPTIMAL: raise ValueError("Solver could not find an optimal solution.")
         weights = pd.Series(w.value, index=returns.columns)
@@ -156,7 +145,6 @@ def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, fl
     return {"expected_return": portfolio_return, "expected_volatility": portfolio_volatility, "sharpe_ratio": sharpe_ratio}
 
 def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, simulations: int) -> pd.DataFrame:
-    # ... (This function remains the same)
     dt = 1 / 252
     num_steps = years * 252
     drift = (er - 0.5 * vol**2) * dt
@@ -170,7 +158,6 @@ def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, sim
 
 @st.cache_data
 def calculate_efficient_frontier(returns: pd.DataFrame, num_portfolios: int = 2000):
-    # ... (This function remains the same)
     results = []
     num_assets = len(returns.columns)
     mean_returns = returns.mean() * 252
@@ -184,37 +171,21 @@ def calculate_efficient_frontier(returns: pd.DataFrame, num_portfolios: int = 20
         results.append([ret, vol, sharpe])
     return pd.DataFrame(results, columns=['return', 'volatility', 'sharpe'])
 
-@st.cache_data
-def backtest_portfolio(prices: pd.DataFrame, weights: pd.Series) -> pd.Series:
-    # ... (This function remains the same)
-    returns = prices.pct_change().dropna()
-    portfolio_returns = returns.dot(weights)
-    return (1 + portfolio_returns).cumprod()
-
-
 # ======================================================================================
 # UI COMPONENTS
 # ======================================================================================
 
-# <<< UI UPDATE: The entire dashboard is now in tabs for a cleaner look >>>
 def display_dashboard(username: str, portfolio: Dict[str, Any]):
     st.subheader(f"Welcome Back, {username.title()}!")
 
     tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📈 Future Projection", "🔍 Performance Analysis"])
 
-    # --- TAB 1: Main Dashboard ---
     with tab1:
-        # Automatic Rebalance Check
         last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
-        days_since_rebalance = (dt.date.today() - last_rebalanced_date).days
-        if days_since_rebalance > 180:
-            st.warning(f"**Time to Rebalance!** Your portfolio is over 6 months old.")
-            if st.button("🔄 Rebalance Now", type="primary", key="rebalance_auto"):
-                st.session_state.rebalance_now = True
-                st.rerun()
-
-        # Core Metrics & Allocation
-        st.metric("Risk Profile", portfolio['risk_profile'])
+        if (dt.date.today() - last_rebalanced_date).days > 180:
+            st.warning("**Time to Rebalance!** Your portfolio is over 6 months old and may have drifted from its target.")
+        
+        st.metric("Current Risk Profile", portfolio['risk_profile'])
         cols = st.columns(3)
         cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
         cols[1].metric("Expected Annual Volatility", f"{portfolio['metrics']['expected_volatility']:.2%}")
@@ -225,66 +196,87 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_pie.update_layout(showlegend=False, title_text="Current Portfolio Allocation", title_x=0.5)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-        # <<< NEW FEATURE: MANUAL REBALANCE SETTINGS >>>
-        with st.expander("⚙️ Settings & Manual Rebalance"):
-            st.write("Rebalancing adjusts your portfolio back to its target allocation. It's recommended every 6 months or whenever you feel your risk preferences have changed.")
+        with st.expander("⚙️ Settings & Rebalancing"):
+            st.write("Here you can manually rebalance your portfolio or change your risk profile entirely.")
+            
+            # Manual Rebalance
             if st.button("Manually Rebalance Portfolio", key="rebalance_manual"):
                 st.session_state.rebalance_now = True
                 st.rerun()
-    
-    # ... The rest of the function (for Tab 2 and Tab 3) remains exactly the same ...
-    # (No need to copy it here, just make sure this expander is added to your existing function)
+
+            # --- FEATURE: Change Risk Profile ---
+            st.markdown("---")
+            st.write("**Change Your Risk Profile**")
+            new_profile = st.selectbox(
+                "Select your new risk profile:",
+                options=["Conservative", "Balanced", "Aggressive"],
+                index=["Conservative", "Balanced", "Aggressive"].index(portfolio['risk_profile'])
+            )
+            if st.button("Update Profile & Rebalance", type="primary"):
+                st.session_state.profile_change_request = True
+                st.session_state.new_profile = new_profile
+                st.rerun()
+
     with tab2:
-        # (Monte Carlo code is unchanged)
+        # Monte Carlo Simulation UI
         st.header("Future Growth Simulation")
+        # ... (code is unchanged)
         sim_cols = st.columns([1, 3])
         with sim_cols[0]:
             initial_investment = st.number_input("Initial Investment ($)", min_value=1000, value=10000, step=1000, format="%d")
             simulation_years = st.slider("Investment Horizon (Years)", min_value=1, max_value=30, value=10)
-        
         sim_results = run_monte_carlo(initial_investment, portfolio['metrics']['expected_return'], portfolio['metrics']['expected_volatility'], simulation_years, 500)
         final_values = sim_results.iloc[-1]
-        
         with sim_cols[1]:
             fig_sim = go.Figure()
             fig_sim.add_traces([go.Scatter(x=sim_results.index / 252, y=sim_results[col], mode='lines', line_color='lightgrey', showlegend=False) for col in sim_results.columns[:100]])
             fig_sim.add_traces([go.Scatter(x=sim_results.index / 252, y=sim_results.quantile(q, axis=1), mode='lines', line=dict(width=3), name=f'{q*100:.0f}th Percentile') for q in [0.1, 0.5, 0.9]])
             fig_sim.update_layout(title_text=f"Projected Growth of ${initial_investment:,.0f}", xaxis_title="Years", yaxis_title="Portfolio Value ($)", yaxis_tickformat="$,.0f")
             st.plotly_chart(fig_sim, use_container_width=True)
-
         st.info(f"After **{simulation_years} years**, your portfolio has a projected median value of **${final_values.median():,.0f}**.")
     
     with tab3:
-        # (Performance Analysis code is unchanged)
         st.header("Performance & Risk Analysis")
-        prices = get_price_data(list(weights.index))
-        returns = prices.pct_change().dropna()
-
+        
+        # --- FEATURE: Backtest against SPY and QQQ ---
         st.subheader("Historical Performance Backtest")
-        equal_weights = pd.Series([1/len(weights)] * len(weights), index=weights.index)
-        mpt_performance = backtest_portfolio(prices, weights)
-        benchmark_performance = backtest_portfolio(prices, equal_weights)
+        st.write("This chart shows how your MPT-optimized portfolio would have performed historically against the S&P 500 (SPY) and NASDAQ 100 (QQQ) market benchmarks.")
+        
+        @st.cache_data
+        def get_benchmark_data(tickers, start_date):
+            return yf.download(tickers, start=start_date, progress=False)["Close"]
+
+        # Get data for portfolio and benchmarks
+        all_tickers = list(weights.index) + ["SPY", "QQQ"]
+        all_prices = get_benchmark_data(all_tickers, "2018-01-01")
+        
+        # Calculate performance
+        mpt_performance = (1 + all_prices[weights.index].pct_change().dropna().dot(weights)).cumprod()
+        spy_performance = (all_prices["SPY"] / all_prices["SPY"].iloc[0])
+        qqq_performance = (all_prices["QQQ"] / all_prices["QQQ"].iloc[0])
+        
         fig_backtest = go.Figure()
         fig_backtest.add_trace(go.Scatter(x=mpt_performance.index, y=mpt_performance, mode='lines', name='Your MPT Portfolio'))
-        fig_backtest.add_trace(go.Scatter(x=benchmark_performance.index, y=benchmark_performance, mode='lines', name='Equal-Weight Benchmark', line=dict(dash='dash')))
-        fig_backtest.update_layout(title="Historical Performance: MPT vs. Benchmark", yaxis_title="Growth of $1", yaxis_tickformat=".2f")
+        fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, mode='lines', name='S&P 500 (SPY)', line=dict(dash='dash')))
+        fig_backtest.add_trace(go.Scatter(x=qqq_performance.index, y=qqq_performance, mode='lines', name='NASDAQ 100 (QQQ)', line=dict(dash='dot')))
+        fig_backtest.update_layout(title="Historical Performance vs. Market Benchmarks", yaxis_title="Growth of $1", yaxis_tickformat=".2f")
         st.plotly_chart(fig_backtest, use_container_width=True)
 
+        # Efficient Frontier
         st.subheader("Efficient Frontier Analysis")
+        returns = all_prices[weights.index].pct_change().dropna()
         frontier_df = calculate_efficient_frontier(returns)
         fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier Analysis')
         fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
         st.plotly_chart(fig_frontier, use_container_width=True)
 
-
 def display_questionnaire() -> Tuple[str, bool]:
-    # ... (This function remains the same)
     st.subheader("Answer a Few Questions to Build Your Portfolio")
     total_score = 0
     for i, (question, options) in enumerate(QUESTIONNAIRE.items()):
         response_index = options.index(st.radio(question, options, key=f"q_{i}"))
         total_score += response_index
-    use_ml_model = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)", value=False, help="Uses a machine learning model to forecast risk instead of relying only on historical data.")
+    use_ml_model = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)", value=False)
     if st.button("📈 Build My Portfolio", type="primary"):
         if total_score <= 2: return "Conservative", use_ml_model
         if total_score <= 5: return "Balanced", use_ml_model
@@ -295,31 +287,22 @@ def display_questionnaire() -> Tuple[str, bool]:
 # MAIN APPLICATION LOGIC
 # ======================================================================================
 
-# <<< FIX: PASS RISK_PROFILE TO HELPER FUNCTION >>>
 def run_portfolio_creation(risk_profile: str, use_garch: bool) -> Dict | None:
-    """Helper function to create/rebalance a portfolio. Returns portfolio dict or None."""
     with st.spinner(f"Building your '{risk_profile}' portfolio..."):
-        # <<< UPDATE: Use the single master list for all profiles >>>
         assets = MASTER_ASSET_LIST
         prices = get_price_data(assets)
         if prices.empty: return None
-
         returns = prices.pct_change().dropna()
         weights = optimize_portfolio(returns, risk_profile, use_garch=use_garch)
-
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
-            return {
-                "risk_profile": risk_profile,
-                "weights": weights.to_dict(),
-                "metrics": metrics,
-                "last_rebalanced_date": dt.date.today().isoformat(),
-                "used_garch": use_garch
-            }
+            return {"risk_profile": risk_profile, "weights": weights.to_dict(), "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(), "used_garch": use_garch}
     return None
+
 def main():
-    st.title("WealthFlow 🤖")
-    st.caption("Your Personal AI-Powered Investment Advisor")
+    st.title("WealthFlow 🤖 AI-Powered Investment Advisor")
+    st.markdown("Welcome to your personal robo-advisor. This tool uses **Modern Portfolio Theory (MPT)** and optional **Machine Learning (GARCH) models** to build a diversified investment portfolio tailored to your risk preferences.")
+    
     all_portfolios = load_portfolios()
     
     username = st.text_input("Please enter your name to begin:", key="username_input")
@@ -329,18 +312,19 @@ def main():
 
     user_exists = username in all_portfolios
     rebalance_triggered = st.session_state.get("rebalance_now", False)
+    profile_change_triggered = st.session_state.get("profile_change_request", False)
 
-    if user_exists and rebalance_triggered:
-        st.session_state.rebalance_now = False
-        risk_profile = all_portfolios[username]['risk_profile']
+    if (user_exists and rebalance_triggered) or profile_change_triggered:
+        risk_profile = st.session_state.new_profile if profile_change_triggered else all_portfolios[username]['risk_profile']
         use_garch = all_portfolios[username].get('used_garch', False)
-        
         new_portfolio = run_portfolio_creation(risk_profile, use_garch)
         if new_portfolio:
             all_portfolios[username] = new_portfolio
             save_portfolios(all_portfolios)
-            st.success("Your portfolio has been successfully rebalanced!")
+            st.success(f"Your portfolio has been successfully updated to a '{risk_profile}' allocation!")
             st.balloons()
+        st.session_state.rebalance_now = False
+        st.session_state.profile_change_request = False
         st.rerun()
 
     elif not user_exists:
@@ -356,6 +340,9 @@ def main():
     
     else:
         display_dashboard(username, all_portfolios[username])
+
+    st.markdown("---")
+    st.caption("Disclaimer: This is a technology demonstration and not financial advice. All investment decisions should be made with the consultation of a qualified financial professional.")
 
 if __name__ == "__main__":
     main()
