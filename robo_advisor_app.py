@@ -117,38 +117,51 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     """
     Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
+    This final version explicitly handles the multi-level column index from yfinance.
     """
-    # Use auto_adjust=True to get split/dividend adjusted data.
-    spy_df = yf.download("SPY", start=start_date, progress=False, auto_adjust=True)
+    # Download raw data - we know it has a multi-level column index
+    spy_raw_data = yf.download("SPY", start=start_date, progress=False, auto_adjust=False)
 
-    # --- DEBUGGING LINE ---
-    # This will print the column names to your Streamlit log to confirm them.
-    print(f"yfinance columns: {spy_df.columns.tolist()}")
+    # --- FINAL, ROBUST FIX ---
+    # Explicitly handle the multi-level column index: ('Close', 'SPY')
+    # First, select the 'Close' level, which results in a DataFrame with ticker names as columns.
+    spy_close_df = spy_raw_data['Close']
+    
+    # Then, select the column for the SPY ticker, which is now a simple Series of prices.
+    spy_close_prices = spy_close_df['SPY']
 
-    # We are certain the column must be named 'Close' with auto_adjust=True
-    returns = np.log(spy_df['Close']).diff().dropna()
+    # Calculate returns from the 'Close' price Series
+    returns = np.log(spy_close_prices).diff().dropna()
     
     # Fit the HMM model
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
     model.fit(returns.to_numpy().reshape(-1, 1))
     hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
     
-    # Identify regimes
+    # Identify regimes based on volatility
     vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
     high_vol_state = np.argmax(vols)
     
+    # Create the regime DataFrame with the correct index
     regime_df = pd.DataFrame({
         'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]
     }, index=returns.index)
     
-    # Create the final DataFrame for charting
-    final_df = pd.DataFrame(spy_df['Close'])
+    # Build the final DataFrame for the chart, starting with the price Series
+    final_df = pd.DataFrame(spy_close_prices)
     final_df = final_df.join(regime_df['regime_label'])
+    
+    # Rename the price column from 'SPY' to 'Close' for consistency with the rest of the app
+    final_df.rename(columns={'SPY': 'Close'}, inplace=True)
+    
+    # Forward-fill the first row's regime label which is NaN
     final_df['regime_label'].ffill(inplace=True)
     
+    # Return the required columns with the correct names
     return final_df[['Close', 'regime_label']]
 
 # Other financial functions (analyze_portfolio, run_monte_carlo, etc.) are here
