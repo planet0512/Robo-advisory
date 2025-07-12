@@ -35,11 +35,16 @@ RISK_AVERSION_FACTORS = {
     "Aggressive": 1.0,
 }
 
-ASSET_POOLS = {
-    "Conservative": ["BND", "TIP", "LQD", "IEF", "AGG"],
-    "Balanced": ["SPY", "VEA", "VWO", "BND", "VNQ"],
-    "Aggressive": ["QQQ", "SPYG", "VGT", "ARKK", "IWM"],
-}
+# <<< UPDATE: Use a single, globally diversified asset list for all profiles >>>
+# This professional strategy is used by leading robo-advisors.
+MASTER_ASSET_LIST = [
+    "VTI",  # U.S. Total Stock Market
+    "VEA",  # Developed Markets (ex-US)
+    "VWO",  # Emerging Markets
+    "BND",  # U.S. Total Bond Market
+    "VNQ",  # U.S. Real Estate
+    "TIP",  # Inflation-Protected Bonds
+]
 
 QUESTIONNAIRE = {
     "When you think about investing, what's your primary goal?": [
@@ -284,15 +289,16 @@ def display_questionnaire() -> Tuple[str, bool]:
 
 # <<< FIX: PASS RISK_PROFILE TO HELPER FUNCTION >>>
 def run_portfolio_creation(risk_profile: str, use_garch: bool) -> Dict | None:
+    """Helper function to create/rebalance a portfolio. Returns portfolio dict or None."""
     with st.spinner(f"Building your '{risk_profile}' portfolio..."):
-        assets = ASSET_POOLS[risk_profile]
+        # <<< UPDATE: Use the single master list for all profiles >>>
+        assets = MASTER_ASSET_LIST
         prices = get_price_data(assets)
         if prices.empty: return None
-        
+
         returns = prices.pct_change().dropna()
-        # <<< FIX: PASS RISK_PROFILE TO OPTIMIZER >>>
         weights = optimize_portfolio(returns, risk_profile, use_garch=use_garch)
-        
+
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
             return {
@@ -303,7 +309,6 @@ def run_portfolio_creation(risk_profile: str, use_garch: bool) -> Dict | None:
                 "used_garch": use_garch
             }
     return None
-
 def main():
     st.title("WealthFlow 🤖")
     st.caption("Your Personal AI-Powered Investment Advisor")
