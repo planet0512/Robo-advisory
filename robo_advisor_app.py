@@ -136,7 +136,10 @@ def optimize_portfolio(returns: pd.DataFrame, use_garch: bool = False) -> pd.Ser
         st.toast("Using historical model for risk...", icon="📜")
         Sigma = returns.cov().to_numpy() * 252
 
-    # --- Start of the corrected try/except block ---
+    # <<< FIX: Sanitize numpy arrays to remove any NaN/inf values >>>
+    mu = np.nan_to_num(mu)
+    Sigma = np.nan_to_num(Sigma)
+
     try:
         # Enforce and wrap the covariance matrix for the solver
         Sigma = 0.5 * (Sigma + Sigma.T)
@@ -165,7 +168,7 @@ def optimize_portfolio(returns: pd.DataFrame, use_garch: bool = False) -> pd.Ser
         # This will now catch the original, informative error
         st.error(f"Optimization failed: {e}")
         return None
-
+        
 def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, float]:
     portfolio_return = np.sum(returns.mean() * 252 * weights)
     cov_matrix = returns.cov() * 252
