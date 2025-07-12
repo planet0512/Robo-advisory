@@ -103,21 +103,38 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 
 # <<< FEATURE: ML MARKET REGIME DETECTION (HMM) >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
+    """
+    Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
+    """
     spy = yf.download("SPY", start=start_date, progress=False)
+    # The 'returns' DataFrame will have one less row than 'spy'
     returns = np.log(spy['Close']).diff().dropna()
-    
+
+    # Fit the HMM model on the returns data
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
-    model.fit(returns)
-    hidden_states = model.predict(returns)
-    
-    # Identify which state is high volatility
-    vols = [np.sqrt(model.covars_[i]) for i in range(model.n_components)]
-    high_vol_state = np.argmax(vols)
-    
-    spy['regime'] = hidden_states
-    spy['regime_label'] = spy['regime'].apply(lambda x: 'High Volatility' if x == high_vol_state else 'Low Volatility')
-    return spy[['Close', 'regime_label']]
+    model.fit(returns.to_numpy().reshape(-1, 1)) # Use numpy array for fitting
+    hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
+
+    # Identify which state is high volatility vs. low volatility
+    # We assume the state with the higher mean return is the "Low Volatility" regime
+    means = model.means_.flatten()
+    low_vol_state = np.argmax(means)
+
+    # <<< FIX: Create a new DataFrame for regimes with the correct index >>>
+    regime_df = pd.DataFrame({
+        'regime': hidden_states,
+        'regime_label': ['Low Volatility' if s == low_vol_state else 'High Volatility' for s in hidden_states]
+    }, index=returns.index)
+
+    # <<< FIX: Join the regime data back to the original 'spy' DataFrame >>>
+    spy_with_regimes = spy.join(regime_df['regime_label'])
+
+    # Forward-fill the first row which will be NaN after the join
+    spy_with_regimes['regime_label'].ffill(inplace=True)
+
+    return spy_with_regimes[['Close', 'regime_label']]
 
 # Other financial functions (analyze_portfolio, run_monte_carlo, etc.) are here
 def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, float]:
