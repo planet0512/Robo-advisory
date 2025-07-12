@@ -116,43 +116,37 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
 @st.cache_data(ttl=dt.timedelta(hours=12))
+@st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     """
     Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
-    This version is robust against multi-level column issues from yfinance.
     """
-    # Download raw data
-    spy_raw_data = yf.download("SPY", start=start_date, progress=False)
+    # Use auto_adjust=True to get split/dividend adjusted data.
+    spy_df = yf.download("SPY", start=start_date, progress=False, auto_adjust=True)
 
-    # --- NEW, MORE ROBUST FIX ---
-    # Immediately select the 'Close' Series to work with simple data structures
-    spy_close_prices = spy_raw_data['Close']
+    # --- DEBUGGING LINE ---
+    # This will print the column names to your Streamlit log to confirm them.
+    print(f"yfinance columns: {spy_df.columns.tolist()}")
 
-    # Calculate returns from the 'Close' price Series
-    returns = np.log(spy_close_prices).diff().dropna()
+    # We are certain the column must be named 'Close' with auto_adjust=True
+    returns = np.log(spy_df['Close']).diff().dropna()
     
-    # Fit the HMM model on the returns data
+    # Fit the HMM model
     model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
     model.fit(returns.to_numpy().reshape(-1, 1))
     hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
     
-    # Identify which state is high volatility vs. low volatility
+    # Identify regimes
     vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
     high_vol_state = np.argmax(vols)
     
-    # Create the regime DataFrame with the correct index
     regime_df = pd.DataFrame({
         'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]
     }, index=returns.index)
     
-    # --- NEW, MORE ROBUST FIX ---
-    # Build the final DataFrame from the simplified 'Close' price Series
-    final_df = pd.DataFrame(spy_close_prices)
-
-    # Join the regime labels. This is now a clean join between two single-level objects.
+    # Create the final DataFrame for charting
+    final_df = pd.DataFrame(spy_df['Close'])
     final_df = final_df.join(regime_df['regime_label'])
-    
-    # Forward-fill the first row which will be NaN after the join
     final_df['regime_label'].ffill(inplace=True)
     
     return final_df[['Close', 'regime_label']]
