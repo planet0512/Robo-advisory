@@ -174,6 +174,27 @@ def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, fl
 
 # All other helper functions from previous versions are assumed to be here and unchanged...
 # (run_monte_carlo, calculate_efficient_frontier)
+def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, simulations: int) -> pd.DataFrame:
+    """
+    Runs a Monte Carlo simulation using Geometric Brownian Motion.
+    """
+    dt = 1 / 252
+    num_steps = years * 252
+    
+    # Calculate drift and random component
+    drift = (er - 0.5 * vol**2) * dt
+    random_shock = vol * np.sqrt(dt) * np.random.normal(0, 1, (num_steps, simulations))
+    
+    # Calculate daily returns
+    daily_returns = np.exp(drift + random_shock)
+    
+    # Simulate price paths
+    price_paths = np.zeros((num_steps + 1, simulations))
+    price_paths[0] = initial_investment
+    for t in range(1, num_steps + 1):
+        price_paths[t] = price_paths[t - 1] * daily_returns[t - 1]
+        
+    return pd.DataFrame(price_paths)
 
 # ======================================================================================
 # UI COMPONENTS
