@@ -278,13 +278,12 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         # (Monte Carlo UI and logic)
 
     # --- TAB 3: Performance Analysis (UPDATED) ---
-    with tab3:
+     with tab3:
         st.header("Performance & Risk Analysis")
-        weights = pd.Series(portfolio["weights"]) # Ensure weights is defined
+        weights = pd.Series(portfolio["weights"]) 
         all_prices = get_price_data(list(weights.index) + ["SPY", "QQQ"], "2018-01-01")
         returns = all_prices[weights.index].pct_change().dropna()
 
-        # --- Historical Performance Backtest ---
         st.subheader("Historical Performance Backtest")
         mpt_performance = (1 + returns.dot(weights)).cumprod()
         spy_performance = (all_prices["SPY"] / all_prices["SPY"].iloc[0])
@@ -294,7 +293,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark", yaxis_title="Growth of $1")
         st.plotly_chart(fig_backtest, use_container_width=True)
 
-        # --- <<< NEW: Historical Drawdown Chart >>> ---
         st.subheader("Historical Drawdown Analysis")
         st.write("Drawdown measures the percentage loss from the most recent peak. This chart shows how your portfolio's downturns compare to the S&P 500.")
         mpt_drawdown = calculate_drawdown(mpt_performance)
@@ -305,18 +303,24 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_drawdown.update_layout(title="Portfolio Drawdown vs. S&P 500", yaxis_title="Percentage Loss from Peak", yaxis_tickformat=".0%")
         st.plotly_chart(fig_drawdown, use_container_width=True)
         
-        # --- <<< NEW: Sharpe Ratio Comparison Chart >>> ---
+        # --- <<< FIX: Robust Sharpe Ratio calculation for the chart >>> ---
         st.subheader("Sharpe Ratio Comparison")
         st.write("This chart compares the risk-adjusted return of your portfolio to its individual components.")
-        # Calculate individual Sharpe ratios
-        individual_sharpes = (returns.mean() * 252) / (returns.std() * np.sqrt(252))
+        
+        asset_returns = returns.mean() * 252
+        asset_std_dev = returns.std() * np.sqrt(252)
+        
+        # Use np.divide for safe division, returning 0 where volatility is 0
+        individual_sharpes = np.divide(asset_returns, asset_std_dev, out=np.zeros_like(asset_returns), where=asset_std_dev!=0)
+        individual_sharpes = pd.Series(individual_sharpes, index=returns.columns)
+
         portfolio_sharpe = portfolio['metrics']['sharpe_ratio']
+        
         # Combine for charting
         sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
         sharpe_ratios_df.loc['Your Portfolio'] = portfolio_sharpe
         st.bar_chart(sharpe_ratios_df)
 
-        # --- Efficient Frontier ---
         st.subheader("Efficient Frontier Analysis")
         frontier_df = calculate_efficient_frontier(returns)
         fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier Analysis')
