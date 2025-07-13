@@ -367,40 +367,48 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.write("**US Inflation Rate (YoY)**"); cpi_data = get_cpi_data()
             if cpi_data is not None: st.line_chart(cpi_data)
                 
-        # --- Machine Learning: Market Regime Detection ---
+        
         # --- Machine Learning: Market Regime Detection ---
         st.subheader("Machine Learning: Market Regime Detection")
-        st.write("This chart uses a Hidden Markov Model (HMM) on the S&P 500 to identify underlying market states. The color of the price line indicates the market's volatility regime.")
+        st.write("This chart uses a Hidden Markov Model (HMM) to identify underlying market states. The colored backgrounds indicate periods of high or low volatility.")
         
         regime_data = detect_market_regimes()
-        # st.dataframe(regime_data) # You can now remove or comment out the debugging line
-        
         if regime_data is not None and not regime_data.empty:
             current_regime = regime_data['regime_label'].iloc[-1]
             st.info(f"The ML model indicates the market is currently in a **{current_regime}** state.")
             
-            # --- FINAL FIX: A simpler, more robust plotting method ---
+            # --- FINAL UI FIX: Use background shading for a clearer visualization ---
             fig_regime = go.Figure()
 
-            # Define colors for the line segments
-            colors = {'Low Volatility': 'blue', 'High Volatility': 'red'}
-            
-            # Add a separate line segment for each regime to color them differently
-            for state in ['Low Volatility', 'High Volatility']:
-                df_segment = regime_data[regime_data['regime_label'] == state]
-                fig_regime.add_trace(go.Scatter(
-                    x=df_segment.index, 
-                    y=df_segment['Close'],
-                    mode='lines',
-                    name=state, # This will create the legend automatically
-                    line=dict(color=colors[state])
-                ))
+            # Add the main SPY price line as a single, continuous line
+            fig_regime.add_trace(go.Scatter(
+                x=regime_data.index, y=regime_data['Close'], 
+                mode='lines', name='SPY Price', line_color='black', showlegend=False
+            ))
 
+            # Define colors for the shaded regions and the legend
+            colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
+            
+            # Add invisible dummy traces to create a clean legend
+            fig_regime.add_trace(go.Bar(name='Low Volatility Period', x=[None], y=[None], marker_color=colors['Low Volatility']))
+            fig_regime.add_trace(go.Bar(name='High Volatility Period', x=[None], y=[None], marker_color=colors['High Volatility']))
+
+            # Loop through the regimes to draw the shaded background rectangles
+            for state in ['Low Volatility', 'High Volatility']:
+                # Create groups of consecutive identical states
+                for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
+                    fig_regime.add_vrect(
+                        x0=g.index.min(), 
+                        x1=g.index.max(), 
+                        fillcolor=colors[state], 
+                        line_width=0
+                    )
+            
             fig_regime.update_layout(
                 title="Market Regimes Identified by HMM on SPY",
                 yaxis_title="SPY Price",
                 xaxis_title="Date",
-                showlegend=True
+                legend_title_text='Market Regime'
             )
             st.plotly_chart(fig_regime, use_container_width=True)
 
