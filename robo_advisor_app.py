@@ -24,7 +24,15 @@ from hmmlearn import hmm # For Market Regime Detection
 st.set_page_config(page_title="WealthFlow | AI Advisor", page_icon="🤖", layout="wide")
 PORTFOLIO_FILE = Path("user_portfolios.json")
 RISK_AVERSION_FACTORS = {"Conservative": 4.0, "Balanced": 2.5, "Aggressive": 1.0}
-MASTER_ASSET_LIST = ["VTI", "VEA", "VWO", "BND", "VNQ", "TIP"]
+# <<< FINAL UPDATE: A professional-grade Core-Satellite / Factor-based asset list >>>
+MASTER_ASSET_LIST = [
+    "VTI",  # Core: U.S. Total Stock Market
+    "VXUS", # Core: Total International Stock Market (ex-US)
+    "BND",  # Core: U.S. Total Bond Market
+    "QUAL", # Satellite/Factor: Quality (companies with stable earnings, strong balance sheets)
+    "AVUV", # Satellite/Factor: Small-Cap Value (small, inexpensive companies)
+]
+
 QUESTIONNAIRE = {
     "Financial Goal": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
     "Investment Horizon": ["Short-term (< 3 years)", "Medium-term (3-7 years)", "Long-term (> 7 years)"],
@@ -247,40 +255,61 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "📈 Future Projection", "🔍 Performance Analysis", "🧠 Advanced Analytics"])
 
-    # --- TAB 1: Main Dashboard (Unchanged) ---
+    # --- TAB 1: Main Dashboard ---
     with tab1:
-        # (This tab's code is unchanged)
+        # Rebalance Check
         last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
         if (dt.date.today() - last_rebalanced_date).days > 180:
             st.warning("**Time to Rebalance!** Your portfolio is over 6 months old.")
+
+        # Display User Profile and Core Metrics
         profile_cols = st.columns(3)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
         profile_cols[2].metric("Investment Horizon", portfolio.get('profile_answers', {}).get('Investment Horizon', 'N/A'))
+
         metric_cols = st.columns(4)
         metric_cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
         metric_cols[1].metric("Expected Annual Volatility", f"{portfolio['metrics']['expected_volatility']:.2%}")
         metric_cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
         metric_cols[3].metric("Daily Value at Risk (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
+
+        # Allocation Pie Chart
         weights = pd.Series(portfolio["weights"])
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, marker_colors=px.colors.sequential.GnBu_r, textinfo="label+percent"))
         fig_pie.update_layout(showlegend=False, title_text="Current Portfolio Allocation", title_x=0.5)
         st.plotly_chart(fig_pie, use_container_width=True)
+
         with st.expander("⚙️ Settings, Rebalancing & Profile Change"):
-            if st.button("Manually Rebalance Portfolio"): st.session_state.rebalance_now = True; st.rerun()
+            if st.button("Manually Rebalance Portfolio", key="rebalance_manual"):
+                st.session_state.rebalance_now = True
+                st.rerun()
+            st.markdown("---")
             new_profile = st.selectbox("Change risk profile:", options=list(RISK_AVERSION_FACTORS.keys()), index=list(RISK_AVERSION_FACTORS.keys()).index(portfolio['risk_profile']))
-            if st.button("Update Profile & Rebalance", type="primary"): st.session_state.profile_change_request, st.session_state.new_profile = True, new_profile; st.rerun()
+            if st.button("Update Profile & Rebalance", type="primary"):
+                st.session_state.profile_change_request, st.session_state.new_profile = True, new_profile
+                st.rerun()
 
-    # --- TAB 2: Future Projection (Unchanged) ---
+    # --- TAB 2: Future Projection ---
     with tab2:
-        # (This tab's code is unchanged)
         st.header("Future Growth Simulation")
-        # (Monte Carlo UI and logic)
+        sim_cols = st.columns([1, 3])
+        with sim_cols[0]:
+            initial_investment = st.number_input("Initial Investment ($)", min_value=1000, value=10000, step=1000, format="%d", key="mc_investment")
+            simulation_years = st.slider("Investment Horizon (Years)", min_value=1, max_value=30, value=10, key="mc_years")
+        sim_results = run_monte_carlo(initial_investment, portfolio['metrics']['expected_return'], portfolio['metrics']['expected_volatility'], simulation_years, 500)
+        final_values = sim_results.iloc[-1]
+        with sim_cols[1]:
+            fig_sim = go.Figure()
+            fig_sim.add_traces([go.Scatter(x=sim_results.index/252, y=sim_results[col], line_color='lightgrey', showlegend=False) for col in sim_results.columns[:100]])
+            fig_sim.add_traces([go.Scatter(x=sim_results.index/252, y=sim_results.quantile(q, axis=1), line=dict(width=3), name=f'{q*100:.0f}th Percentile') for q in [0.1, 0.5, 0.9]])
+            fig_sim.update_layout(title_text=f"Projected Growth of ${initial_investment:,.0f}", yaxis_tickformat="$,.0f", xaxis_title="Years", yaxis_title="Portfolio Value ($)")
+            st.plotly_chart(fig_sim, use_container_width=True)
 
-    # --- TAB 3: Performance Analysis (UPDATED) ---
+    # --- TAB 3: Performance Analysis ---
     with tab3:
         st.header("Performance & Risk Analysis")
-        weights = pd.Series(portfolio["weights"]) 
+        weights = pd.Series(portfolio["weights"])
         all_prices = get_price_data(list(weights.index) + ["SPY", "QQQ"], "2018-01-01")
         returns = all_prices[weights.index].pct_change().dropna()
 
@@ -293,30 +322,12 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark", yaxis_title="Growth of $1")
         st.plotly_chart(fig_backtest, use_container_width=True)
 
-        st.subheader("Historical Drawdown Analysis")
-        st.write("Drawdown measures the percentage loss from the most recent peak. This chart shows how your portfolio's downturns compare to the S&P 500.")
-        mpt_drawdown = calculate_drawdown(mpt_performance)
-        spy_drawdown = calculate_drawdown(spy_performance)
-        fig_drawdown = go.Figure()
-        fig_drawdown.add_trace(go.Scatter(x=mpt_drawdown.index, y=mpt_drawdown, name='Your Portfolio Drawdown', fill='tozeroy'))
-        fig_drawdown.add_trace(go.Scatter(x=spy_drawdown.index, y=spy_drawdown, name='S&P 500 Drawdown', line=dict(dash='dash')))
-        fig_drawdown.update_layout(title="Portfolio Drawdown vs. S&P 500", yaxis_title="Percentage Loss from Peak", yaxis_tickformat=".0%")
-        st.plotly_chart(fig_drawdown, use_container_width=True)
-        
-        # --- <<< FIX: Robust Sharpe Ratio calculation for the chart >>> ---
         st.subheader("Sharpe Ratio Comparison")
-        st.write("This chart compares the risk-adjusted return of your portfolio to its individual components.")
-        
         asset_returns = returns.mean() * 252
         asset_std_dev = returns.std() * np.sqrt(252)
-        
-        # Use np.divide for safe division, returning 0 where volatility is 0
         individual_sharpes = np.divide(asset_returns, asset_std_dev, out=np.zeros_like(asset_returns), where=asset_std_dev!=0)
         individual_sharpes = pd.Series(individual_sharpes, index=returns.columns)
-
         portfolio_sharpe = portfolio['metrics']['sharpe_ratio']
-        
-        # Combine for charting
         sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
         sharpe_ratios_df.loc['Your Portfolio'] = portfolio_sharpe
         st.bar_chart(sharpe_ratios_df)
@@ -326,11 +337,41 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier Analysis')
         fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
         st.plotly_chart(fig_frontier, use_container_width=True)
-    # --- TAB 4: Advanced Analytics (Unchanged) ---
+
+    # --- TAB 4: Advanced Analytics ---
     with tab4:
-        # (This tab's code is unchanged)
         st.header("Advanced Analytics & Market Insights")
-        # (Stress testing, Yield Curve, and HMM UI and logic)
+        st.subheader("Historical Stress Testing")
+        stress_results = {}
+        for name, (start, end) in CRASH_SCENARIOS.items():
+            try:
+                crisis_prices = get_price_data(list(weights.index), start, end)
+                if not crisis_prices.empty:
+                    crisis_returns = crisis_prices.pct_change().dot(weights).dropna()
+                    cumulative_returns = (1 + crisis_returns).cumprod()
+                    max_drawdown = (cumulative_returns / cumulative_returns.cummax() - 1).min()
+                    stress_results[name] = (cumulative_returns.iloc[-1] - 1, max_drawdown)
+            except Exception: stress_results[name] = (None, None)
+        stress_cols = st.columns(len(stress_results))
+        for i, (name, (total_return, max_drawdown)) in enumerate(stress_results.items()):
+            if total_return is not None:
+                stress_cols[i].metric(f"{name} Return", f"{total_return:.2%}")
+                stress_cols[i].metric(f"Max Drawdown", f"{max_drawdown:.2%}")
+
+        st.subheader("Live Market Indicators")
+        indicator_cols = st.columns(2)
+        with indicator_cols[0]:
+            st.write("**US Treasury Yield Curve**"); yield_curve = get_yield_curve_data()
+            if yield_curve is not None: st.line_chart(yield_curve)
+        with indicator_cols[1]:
+            st.write("**US Inflation Rate (YoY)**"); cpi_data = get_cpi_data()
+            if cpi_data is not None: st.line_chart(cpi_data)
+
+        st.subheader("Machine Learning: Market Regime Detection")
+        regime_data = detect_market_regimes()
+        if regime_data is not None:
+            st.info(f"The ML model indicates the market is currently in a **{regime_data['regime_label'].iloc[-1]}** state.")
+            st.line_chart(regime_data['Close'])
                 
 def display_questionnaire() -> Tuple[str, bool, Dict]:
     # (function is unchanged)
