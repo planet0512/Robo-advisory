@@ -366,13 +366,16 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         with indicator_cols[1]:
             st.write("**US Inflation Rate (YoY)**"); cpi_data = get_cpi_data()
             if cpi_data is not None: st.line_chart(cpi_data)
-
-        # --- Machine Learning: Market Regime Detection ---
+                
         # --- Machine Learning: Market Regime Detection ---
         st.subheader("Machine Learning: Market Regime Detection")
         st.write("This chart uses a Hidden Markov Model (HMM) on the S&P 500 to identify underlying market states. The colored backgrounds indicate periods of high or low volatility.")
-        
+
         regime_data = detect_market_regimes()
+
+        # <<< DEBUGGING: PLEASE ADD THIS LINE TO SHOW THE DATA >>>
+        st.dataframe(regime_data)
+
         if regime_data is not None and not regime_data.empty:
             current_regime = regime_data['regime_label'].iloc[-1]
             st.info(f"The ML model indicates the market is currently in a **{current_regime}** state.")
