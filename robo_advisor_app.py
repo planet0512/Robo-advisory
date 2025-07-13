@@ -368,11 +368,43 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             if cpi_data is not None: st.line_chart(cpi_data)
 
         st.subheader("Machine Learning: Market Regime Detection")
-        regime_data = detect_market_regimes()
-        if regime_data is not None:
-            st.info(f"The ML model indicates the market is currently in a **{regime_data['regime_label'].iloc[-1]}** state.")
-            st.line_chart(regime_data['Close'])
-                
+st.write("This chart uses a Hidden Markov Model (HMM) on the S&P 500 to identify underlying market states (regimes).")
+
+regime_data = detect_market_regimes()
+if regime_data is not None and not regime_data.empty:
+    current_regime = regime_data['regime_label'].iloc[-1]
+    st.info(f"The ML model indicates the market is currently in a **{current_regime}** state.")
+
+    # --- FIX: Use Plotly graph_objects to create the advanced chart ---
+    fig_regime = go.Figure()
+
+    # Add the SPY price line
+    fig_regime.add_trace(go.Scatter(
+        x=regime_data.index, y=regime_data['Close'], 
+        mode='lines', name='SPY Price', line_color='black'
+    ))
+
+    # Define colors for the shaded regions
+    colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
+
+    # Find contiguous blocks of each regime and add shaded rectangles
+    for state in ['Low Volatility', 'High Volatility']:
+        # Create groups of consecutive identical states
+        for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
+            fig_regime.add_vrect(
+                x0=g.index.min(), 
+                x1=g.index.max(), 
+                fillcolor=colors[state], 
+                line_width=0,
+                annotation_text=state,
+                annotation_position="top left"
+            )
+
+    fig_regime.update_layout(title="Market Regimes Identified by HMM on SPY", yaxis_title="SPY Price")
+    st.plotly_chart(fig_regime, use_container_width=True)
+
+else:
+    st.warning("Could not generate the market regime analysis.")                
 def display_questionnaire() -> Tuple[str, bool, Dict]:
     # (function is unchanged)
     st.subheader("Please Complete Your Investor Profile")
