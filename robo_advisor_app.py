@@ -368,49 +368,46 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             if cpi_data is not None: st.line_chart(cpi_data)
 
         # --- Machine Learning: Market Regime Detection ---
+        # --- Machine Learning: Market Regime Detection ---
         st.subheader("Machine Learning: Market Regime Detection")
         st.write("This chart uses a Hidden Markov Model (HMM) on the S&P 500 to identify underlying market states. The colored backgrounds indicate periods of high or low volatility.")
         
-        @st.cache_data(ttl=dt.timedelta(hours=12))
-def detect_market_regimes(start_date="2010-01-01"):
-    """
-    Detects market regimes using a Hidden Markov Model (HMM) on SPY returns.
-    This version is wrapped for robustness to prevent silent failures.
-    """
-    try:
-        spy_raw_data = yf.download("SPY", start=start_date, progress=False, auto_adjust=False)
-        if spy_raw_data.empty:
-            return None
+        regime_data = detect_market_regimes()
+        if regime_data is not None and not regime_data.empty:
+            current_regime = regime_data['regime_label'].iloc[-1]
+            st.info(f"The ML model indicates the market is currently in a **{current_regime}** state.")
+            
+            # --- Complete, corrected code to build the chart ---
+            fig_regime = go.Figure()
 
-        spy_close_df = spy_raw_data['Close']
-        spy_close_prices = spy_close_df['SPY']
-        returns = np.log(spy_close_prices).diff().dropna()
+            # Define colors for the legend and shaded regions
+            colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
 
-        if len(returns) < 50: # Ensure there's enough data for the model
-            return None
+            # Add invisible dummy traces to create a clean legend
+            fig_regime.add_trace(go.Bar(name='Low Volatility', x=[None], y=[None], marker_color=colors['Low Volatility']))
+            fig_regime.add_trace(go.Bar(name='High Volatility', x=[None], y=[None], marker_color=colors['High Volatility']))
 
-        model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
-        model.fit(returns.to_numpy().reshape(-1, 1))
-        hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
+            # Add the SPY price line itself
+            fig_regime.add_trace(go.Scatter(
+                x=regime_data.index, y=regime_data['Close'], 
+                mode='lines', name='SPY Price', line_color='black', showlegend=False
+            ))
 
-        vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
-        high_vol_state = np.argmax(vols)
+            # Find contiguous blocks of each regime and add the shaded rectangles
+            for state in ['Low Volatility', 'High Volatility']:
+                for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
+                    fig_regime.add_vrect(
+                        x0=g.index.min(), 
+                        x1=g.index.max(), 
+                        fillcolor=colors[state], 
+                        line_width=0,
+                    )
+            
+            fig_regime.update_layout(title="Market Regimes Identified by HMM on SPY", yaxis_title="SPY Price")
+            st.plotly_chart(fig_regime, use_container_width=True)
 
-        regime_df = pd.DataFrame({
-            'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]
-        }, index=returns.index)
-
-        final_df = pd.DataFrame(spy_close_prices)
-        final_df = final_df.join(regime_df['regime_label'])
-        final_df.rename(columns={'SPY': 'Close'}, inplace=True)
-        final_df['regime_label'].ffill(inplace=True)
-
-        return final_df[['Close', 'regime_label']]
-
-    except Exception as e:
-        # If anything fails (download, model fit, etc.), return None gracefully
-        print(f"HMM Regime detection failed: {e}") # This will show in logs
-        return None            
+        else:
+            st.warning("Could not generate the market regime analysis.")            
 def display_questionnaire() -> Tuple[str, bool, Dict]:
     # (function is unchanged)
     st.subheader("Please Complete Your Investor Profile")
