@@ -278,7 +278,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         # (Monte Carlo UI and logic)
 
     # --- TAB 3: Performance Analysis (UPDATED) ---
-     with tab3:
+    with tab3:
         st.header("Performance & Risk Analysis")
         weights = pd.Series(portfolio["weights"]) 
         all_prices = get_price_data(list(weights.index) + ["SPY", "QQQ"], "2018-01-01")
@@ -326,7 +326,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier Analysis')
         fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
         st.plotly_chart(fig_frontier, use_container_width=True)
-
     # --- TAB 4: Advanced Analytics (Unchanged) ---
     with tab4:
         # (This tab's code is unchanged)
