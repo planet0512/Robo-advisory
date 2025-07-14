@@ -1,5 +1,5 @@
-# robo_advisor_app_v5.py
-# Final, robust version with fixes for data availability and KeyErrors.
+# robo_advisor_app_v6.py
+# Final, robust version with a resilient data-fetching function to prevent KeyErrors.
 
 import json
 import datetime as dt
@@ -50,18 +50,31 @@ CRASH_SCENARIOS = {
 # DATA & PERSISTENCE
 # ======================================================================================
 
+# <<< FIX: Rewrote get_price_data to be more robust and handle yfinance edge cases >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
+    """
+    Fetches and sanitizes price data from yfinance, always returning a
+    DataFrame of close prices with tickers as columns.
+    """
     end_date = end_date or dt.date.today().isoformat()
     try:
-        prices = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        # Handle cases for single vs multiple tickers
-        if len(tickers) == 1:
-            if not prices.empty:
-                return prices[['Close']].rename(columns={'Close': tickers[0]})
-        if 'Close' in prices.columns:
-            return prices['Close']
-        return prices # Fallback for multi-level columns if needed
+        data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
+        if data.empty:
+            return pd.DataFrame()
+
+        # Uniformly handle the output DataFrame structure
+        if isinstance(data.columns, pd.MultiIndex):
+            # Multiple tickers: select the 'Close' price level
+            prices = data['Close']
+        else:
+            # Single ticker: it's already a flat DataFrame
+            prices = data[['Close']]
+            # For consistency, rename the column to the ticker name
+            if len(tickers) == 1:
+                prices = prices.rename(columns={'Close': tickers[0]})
+
+        return prices.ffill().dropna(axis=1, how="all")
     except Exception:
         return pd.DataFrame()
 
@@ -232,28 +245,22 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     with tab3:
         st.header("Performance & Risk Analysis")
         all_prices = get_price_data(list(weights.index) + ["SPY"], "2018-01-01")
-        
         if not all_prices.empty and not all_prices.isnull().all().all():
             valid_assets = [col for col in weights.index if col in all_prices.columns and not all_prices[col].isnull().all()]
             returns = all_prices[valid_assets].pct_change().dropna()
-
             if returns.empty:
                 st.warning("Could not calculate returns for backtesting due to missing data.")
                 return
-
             st.subheader("Historical Performance Backtest")
             aligned_weights = weights[valid_assets]
             aligned_weights /= aligned_weights.sum()
-
             portfolio_performance = (1 + returns.dot(aligned_weights)).cumprod()
             spy_performance = (1 + all_prices["SPY"].pct_change().dropna()).cumprod()
-            
             fig_backtest = go.Figure()
             fig_backtest.add_trace(go.Scatter(x=portfolio_performance.index, y=portfolio_performance, name='Your Portfolio'))
             fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, name='S&P 500 (SPY)', line=dict(dash='dash')))
             fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark (Growth of $1)", yaxis_title="Cumulative Growth")
             st.plotly_chart(fig_backtest, use_container_width=True)
-
             st.subheader("Sharpe Ratio Comparison")
             asset_returns = returns.mean() * 252
             asset_std_dev = returns.std() * np.sqrt(252)
@@ -261,7 +268,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
             sharpe_ratios_df.loc['Your Portfolio'] = portfolio['metrics']['sharpe_ratio']
             st.bar_chart(sharpe_ratios_df)
-
             st.subheader("Efficient Frontier")
             frontier_df = calculate_efficient_frontier(returns)
             fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier & Your Portfolio')
@@ -269,7 +275,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.plotly_chart(fig_frontier, use_container_width=True)
         else:
             st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
-
     
     with tab4:
         st.header("Portfolio Intelligence")
@@ -281,6 +286,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             
             if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
                 st.warning(f"Could not retrieve valid market data for the {name} period.")
+                st.markdown("---")
                 continue
 
             available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
