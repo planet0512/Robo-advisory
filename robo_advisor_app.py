@@ -1,6 +1,5 @@
-# robo_advisor_app_v4.py
-# Final, stable version with state management fix and all original features restored.
-# Compatible with Python 3.13 (uses cvxpy, not PyPortfolioOpt).
+# robo_advisor_app_v5.py
+# Final, robust version with fixes for data availability and KeyErrors.
 
 import json
 import datetime as dt
@@ -55,9 +54,17 @@ CRASH_SCENARIOS = {
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
     end_date = end_date or dt.date.today().isoformat()
     try:
-        prices = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)["Close"]
-        return prices.ffill().dropna(axis=1, how="all")
-    except Exception: return pd.DataFrame()
+        prices = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
+        # Handle cases for single vs multiple tickers
+        if len(tickers) == 1:
+            if not prices.empty:
+                return prices[['Close']].rename(columns={'Close': tickers[0]})
+        if 'Close' in prices.columns:
+            return prices['Close']
+        return prices # Fallback for multi-level columns if needed
+    except Exception:
+        return pd.DataFrame()
+
 
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_cpi_data(start_date="2010-01-01"):
@@ -124,20 +131,26 @@ def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, fl
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     try:
-        spy_prices = yf.download("SPY", start=start_date, progress=False, auto_adjust=True)['Close']
+        spy_df = yf.download("SPY", start=start_date, progress=False, auto_adjust=True)
+        if spy_df.empty or 'Close' not in spy_df.columns:
+            return None
+        spy_prices = spy_df['Close']
         returns = np.log(spy_prices).diff().dropna()
+        if returns.empty: return None
+
         model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
         model.fit(returns.to_numpy().reshape(-1, 1))
         hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
         vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
         high_vol_state = np.argmax(vols)
         regime_df = pd.DataFrame({'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]}, index=returns.index)
+        
         final_df = pd.DataFrame(spy_prices).join(regime_df)
-        final_df['regime_label'].ffill(inplace=True)
+        final_df['regime_label'] = final_df['regime_label'].ffill()
         return final_df
-    except Exception: return None
+    except Exception:
+        return None
 
-# <<< RESTORED: All original helper functions for UI tabs >>>
 def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, simulations: int) -> pd.DataFrame:
     dt = 1/252
     num_steps = years * 252
@@ -175,11 +188,9 @@ def calculate_drawdown(performance_series: pd.Series) -> pd.Series:
 
 def display_dashboard(username: str, portfolio: Dict[str, Any]):
     st.subheader(f"Welcome Back, {username.title()}!")
-
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "📈 Future Projection", "🔍 Performance Analysis", "🧠 Portfolio Intelligence"])
     weights = pd.Series(portfolio["weights"])
 
-    # <<< RESTORED: Full functionality for all tabs >>>
     with tab1:
         last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
         if (dt.date.today() - last_rebalanced_date).days > 180:
@@ -220,12 +231,23 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
 
     with tab3:
         st.header("Performance & Risk Analysis")
-        prices = get_price_data(list(weights.index) + ["SPY"], "2018-01-01")
-        if not prices.empty:
-            returns = prices.pct_change().dropna()
+        all_prices = get_price_data(list(weights.index) + ["SPY"], "2018-01-01")
+        
+        if not all_prices.empty and not all_prices.isnull().all().all():
+            valid_assets = [col for col in weights.index if col in all_prices.columns and not all_prices[col].isnull().all()]
+            returns = all_prices[valid_assets].pct_change().dropna()
+
+            if returns.empty:
+                st.warning("Could not calculate returns for backtesting due to missing data.")
+                return
+
             st.subheader("Historical Performance Backtest")
-            portfolio_performance = (1 + returns[weights.index].dot(weights)).cumprod()
-            spy_performance = (1 + returns["SPY"]).cumprod()
+            aligned_weights = weights[valid_assets]
+            aligned_weights /= aligned_weights.sum()
+
+            portfolio_performance = (1 + returns.dot(aligned_weights)).cumprod()
+            spy_performance = (1 + all_prices["SPY"].pct_change().dropna()).cumprod()
+            
             fig_backtest = go.Figure()
             fig_backtest.add_trace(go.Scatter(x=portfolio_performance.index, y=portfolio_performance, name='Your Portfolio'))
             fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, name='S&P 500 (SPY)', line=dict(dash='dash')))
@@ -241,57 +263,72 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.bar_chart(sharpe_ratios_df)
 
             st.subheader("Efficient Frontier")
-            frontier_df = calculate_efficient_frontier(returns[weights.index])
+            frontier_df = calculate_efficient_frontier(returns)
             fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier & Your Portfolio')
             fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
             st.plotly_chart(fig_frontier, use_container_width=True)
+        else:
+            st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
+
     
     with tab4:
         st.header("Portfolio Intelligence")
         st.subheader("Historical Stress Testing")
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
-            crisis_prices = get_price_data(list(weights.index) + ["SPY"], start, end)
-            if not crisis_prices.empty and not crisis_prices.isnull().all().all():
-                available_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
-                aligned_weights = weights[available_assets]
-                aligned_weights /= aligned_weights.sum()
-                
-                portfolio_returns = crisis_prices[available_assets].pct_change().dot(aligned_weights)
-                portfolio_cumulative = (1 + portfolio_returns).cumprod()
-                spy_returns = crisis_prices['SPY'].pct_change()
-                spy_cumulative = (1 + spy_returns).cumprod()
+            all_assets_for_period = list(weights.index) + ["SPY"]
+            crisis_prices = get_price_data(all_assets_for_period, start, end)
+            
+            if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
+                st.warning(f"Could not retrieve valid market data for the {name} period.")
+                continue
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Your Portfolio Total Return", f"{portfolio_cumulative.iloc[-1] - 1:.2%}")
-                    st.metric("Your Portfolio Max Drawdown", f"{calculate_drawdown(portfolio_cumulative).min():.2%}")
-                with col2:
-                    st.metric("S&P 500 Total Return", f"{spy_cumulative.iloc[-1] - 1:.2%}")
-                    st.metric("S&P 500 Max Drawdown", f"{calculate_drawdown(spy_cumulative).min():.2%}")
+            available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
+            
+            if not available_portfolio_assets:
+                st.warning(f"None of your portfolio's assets existed during the {name} period.")
                 st.markdown("---")
-            else:
-                st.warning(f"Could not retrieve sufficient data for the {name} period.")
+                continue
+            
+            aligned_weights = weights[available_portfolio_assets].copy()
+            aligned_weights /= aligned_weights.sum()
+            
+            portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
+            portfolio_cumulative = (1 + portfolio_returns).cumprod()
+            spy_returns = crisis_prices['SPY'].pct_change()
+            spy_cumulative = (1 + spy_returns).cumprod()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Your Portfolio Total Return", f"{portfolio_cumulative.iloc[-1] - 1:.2%}")
+                st.metric("Your Portfolio Max Drawdown", f"{calculate_drawdown(portfolio_cumulative).min():.2%}")
+            with col2:
+                st.metric("S&P 500 Total Return", f"{spy_cumulative.iloc[-1] - 1:.2%}")
+                st.metric("S&P 500 Max Drawdown", f"{calculate_drawdown(spy_cumulative).min():.2%}")
+            st.markdown("---")
 
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
-        if regime_data is not None and not regime_data.empty:
+        if regime_data is not None:
             current_regime = regime_data['regime_label'].iloc[-1]
             st.info(f"The HMM model indicates the market is currently in a **{current_regime}** state.")
             fig_regime = go.Figure()
-            fig_regime.add_trace(go.Scatter(x=regime_data.index, y=regime_data['Close'], mode='lines', name='SPY Price', line_color='black'))
+            fig_regime.add_trace(go.Scatter(x=regime_data.index, y=regime_data['Close'], mode='lines', name='SPY Price', line_color='black', showlegend=False))
             colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
             for state in colors:
+                fig_regime.add_trace(go.Bar(name=f'{state} Period', x=[None], y=[None], marker_color=colors[state]))
                 for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
-                    fig_regime.add_vrect(x0=g.index.min(), x1=g.index.max(), fillcolor=colors[state], line_width=0)
+                    fig_regime.add_vrect(x0=g.index.min(), x1=g.index.max(), fillcolor=colors[state], line_width=0, annotation_text=None)
             st.plotly_chart(fig_regime, use_container_width=True)
+        else:
+            st.warning("Market regime analysis is currently unavailable due to a data issue.")
+
 
 def display_questionnaire() -> Tuple[str, Dict]:
     st.subheader("Please Complete Your Investor Profile")
     answers = {key: st.radio(f"**{key.replace('_', ' ')}**", options) for key, options in QUESTIONNAIRE.items()}
     score = sum(QUESTIONNAIRE[key].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
-    
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, answers
     return "", {}
@@ -299,8 +336,15 @@ def display_questionnaire() -> Tuple[str, Dict]:
 def run_portfolio_creation(risk_profile: str, profile_answers: Dict) -> Dict | None:
     with st.spinner(f"Building your '{risk_profile}' portfolio..."):
         prices = get_price_data(MASTER_ASSET_LIST, "2018-01-01")
-        if prices.empty: return None
+        if prices.empty: 
+            st.error("Could not download market data to create the portfolio.")
+            return None
+        
         returns = prices.pct_change().dropna()
+        if returns.empty:
+            st.error("Could not calculate returns from market data.")
+            return None
+
         weights = optimize_portfolio(returns, risk_profile)
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
@@ -314,17 +358,15 @@ def run_portfolio_creation(risk_profile: str, profile_answers: Dict) -> Dict | N
     return None
 
 # ======================================================================================
-# MAIN APP FLOW with st.session_state
+# MAIN APP FLOW
 # ======================================================================================
 
 def main():
     st.title("WealthGenius 🧠 AI-Powered Investment Advisor")
     st.markdown("Welcome! This tool uses **Modern Portfolio Theory (MPT)** to build and analyze a diversified investment portfolio tailored to your unique investor profile.")
     st.markdown("---")
-
     if "username" not in st.session_state:
         st.session_state.username = None
-
     all_portfolios = load_portfolios()
 
     if st.session_state.username is None:
@@ -338,7 +380,6 @@ def main():
         st.stop()
     
     username = st.session_state.username
-    
     if username not in all_portfolios:
         risk_profile, answers = display_questionnaire()
         if risk_profile:
