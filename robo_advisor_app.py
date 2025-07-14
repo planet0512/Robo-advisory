@@ -1,6 +1,6 @@
-# robo_advisor_app_v8_complete.py
-# Final, complete version with profile changing restored and GARCH ML model added.
-# No sections are omitted.
+# robo_advisor_app_v9.py
+# Final version with UI enhancements for clarity on Monte Carlo results
+# and GARCH model usage.
 
 import json
 import datetime as dt
@@ -163,7 +163,8 @@ def detect_market_regimes(start_date="2010-01-01"):
         final_df['regime_label'] = final_df['regime_label'].ffill()
         final_df = final_df.rename(columns={'SPY': 'Close'})
         return final_df
-    except Exception: return None
+    except Exception:
+        return None
 
 def run_monte_carlo(initial_value, er, vol, years, simulations):
     dt = 1/252
@@ -206,12 +207,13 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     weights = pd.Series(portfolio["weights"])
 
     with tab1:
-        last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
-        if (dt.date.today() - last_rebalanced_date).days > 180:
-            st.warning("Your portfolio is over 6 months old and may need rebalancing.")
-        profile_cols = st.columns(2)
+        # <<< ENHANCEMENT: Added ML Model Status Indicator >>>
+        profile_cols = st.columns(3)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
+        garch_status = "Active (GARCH)" if portfolio.get('used_garch', False) else "Inactive"
+        profile_cols[2].metric("🧠 ML Volatility Model", garch_status)
+        
         st.markdown("---")
         metric_cols = st.columns(5)
         metric_cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
@@ -220,6 +222,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         metric_cols[3].metric("Daily VaR (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
         metric_cols[4].metric("Daily CVaR (95%)", f"{portfolio['metrics']['conditional_value_at_risk_95']:.2%}", help="The expected loss on days within the worst 5% of scenarios.")
         st.markdown("---")
+
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, textinfo="label+percent"))
         fig_pie.update_layout(showlegend=False, title_text="Current Portfolio Allocation", title_x=0.5)
         st.plotly_chart(fig_pie, use_container_width=True)
@@ -237,9 +240,12 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     with tab2:
         st.header("Future Growth Simulation (Monte Carlo)")
         sim_cols = st.columns([1, 3])
-        initial_investment = sim_cols[0].number_input("Initial Investment ($)", 1000, 1000000, 10000, 1000)
-        simulation_years = sim_cols[0].slider("Investment Horizon (Years)", 1, 40, 10)
+        with sim_cols[0]:
+            initial_investment = st.number_input("Initial Investment ($)", 1000, 1000000, 10000, 1000)
+            simulation_years = st.slider("Investment Horizon (Years)", 1, 40, 10)
+        
         sim_results = run_monte_carlo(initial_investment, portfolio['metrics']['expected_return'], portfolio['metrics']['expected_volatility'], simulation_years, 500)
+        
         with sim_cols[1]:
             fig_sim = go.Figure()
             fig_sim.add_traces([go.Scatter(x=sim_results.index/252, y=sim_results[col], line_color='lightgrey', showlegend=False) for col in sim_results.columns[:100]])
@@ -248,8 +254,23 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                  fig_sim.add_trace(go.Scatter(x=sim_results.index/252, y=quantiles[q_val], line=dict(width=3), name=q_name))
             fig_sim.update_layout(title_text=f"Projected Growth of ${initial_investment:,.0f}", yaxis_tickformat="$,.0f", xaxis_title="Years", yaxis_title="Portfolio Value ($)")
             st.plotly_chart(fig_sim, use_container_width=True)
+        
+        # <<< ENHANCEMENT: Display specific projection values >>>
+        st.markdown("---")
+        final_values = sim_results.iloc[-1]
+        pessimistic = final_values.quantile(0.1)
+        median = final_values.quantile(0.5)
+        optimistic = final_values.quantile(0.9)
+        
+        st.subheader(f"Projected Outcomes after {simulation_years} Years")
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Pessimistic Outcome (10%)", f"${pessimistic:,.2f}")
+        metric_cols[1].metric("Median Outcome (50%)", f"${median:,.2f}")
+        metric_cols[2].metric("Optimistic Outcome (90%)", f"${optimistic:,.2f}")
+
 
     with tab3:
+        # ... (This tab's code remains the same) ...
         st.header("Performance & Risk Analysis")
         all_prices = get_price_data(list(weights.index) + ["SPY"], "2018-01-01")
         if not all_prices.empty and not all_prices.isnull().all().all():
@@ -282,24 +303,22 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
     with tab4:
+        # ... (This tab's code remains the same) ...
         st.header("Portfolio Intelligence")
         st.subheader("Historical Stress Testing")
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
             all_assets_for_period = list(weights.index) + ["SPY"]
             crisis_prices = get_price_data(all_assets_for_period, start, end)
-            
             if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
                 st.warning(f"Could not retrieve valid market data for the {name} period.")
                 st.markdown("---")
                 continue
-
             available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
             if not available_portfolio_assets:
                 st.warning(f"None of your portfolio's assets existed during the {name} period.")
                 st.markdown("---")
                 continue
-            
             aligned_weights = weights[available_portfolio_assets].copy()
             aligned_weights /= aligned_weights.sum()
             portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
@@ -314,7 +333,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.metric("S&P 500 Total Return", f"{spy_cumulative.iloc[-1] - 1:.2%}")
                 st.metric("S&P 500 Max Drawdown", f"{calculate_drawdown(spy_cumulative).min():.2%}")
             st.markdown("---")
-
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
         if regime_data is not None:
@@ -350,22 +368,17 @@ def run_portfolio_creation(risk_profile: str, use_garch: bool, profile_answers: 
         if prices.empty: 
             st.error("Could not download market data to create the portfolio.")
             return None
-        
         returns = prices.pct_change().dropna()
         if returns.empty:
             st.error("Could not calculate returns from market data.")
             return None
-
         weights = optimize_portfolio(returns, risk_profile, use_garch)
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
             return {
-                "risk_profile": risk_profile,
-                "weights": {k: v for k, v in weights.items() if v > 0},
-                "metrics": metrics,
-                "last_rebalanced_date": dt.date.today().isoformat(),
-                "profile_answers": profile_answers,
-                "used_garch": use_garch
+                "risk_profile": risk_profile, "weights": {k: v for k, v in weights.items() if v > 0},
+                "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(),
+                "profile_answers": profile_answers, "used_garch": use_garch
             }
     return None
 
@@ -378,10 +391,8 @@ def main():
     st.markdown("Welcome! This tool uses Modern Portfolio Theory (MPT) and Machine Learning models to build and analyze a diversified investment portfolio.")
     st.markdown("---")
     
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "rebalance_request" not in st.session_state:
-        st.session_state.rebalance_request = None
+    if "username" not in st.session_state: st.session_state.username = None
+    if "rebalance_request" not in st.session_state: st.session_state.rebalance_request = None
 
     all_portfolios = load_portfolios()
 
