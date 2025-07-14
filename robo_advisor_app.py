@@ -50,7 +50,6 @@ CRASH_SCENARIOS = {
 # DATA & PERSISTENCE
 # ======================================================================================
 
-# <<< FIX: Rewrote get_price_data to be more robust and handle yfinance edge cases >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
     """
@@ -63,14 +62,10 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
         if data.empty:
             return pd.DataFrame()
 
-        # Uniformly handle the output DataFrame structure
         if isinstance(data.columns, pd.MultiIndex):
-            # Multiple tickers: select the 'Close' price level
             prices = data['Close']
         else:
-            # Single ticker: it's already a flat DataFrame
             prices = data[['Close']]
-            # For consistency, rename the column to the ticker name
             if len(tickers) == 1:
                 prices = prices.rename(columns={'Close': tickers[0]})
 
