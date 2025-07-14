@@ -1,10 +1,19 @@
+# Core App Framework & Data Handling
 streamlit
 pandas
 numpy
-cvxpy
-plotly
 yfinance
-arch
 pandas-datareader
+
+# Plotting & Visualization
+plotly
+
+# Financial Modeling & Machine Learning
+arch
 hmmlearn
 scikit-learn
+scipy
+pypfopt
+
+# Optimization Solvers (dependency for PyPortfolioOpt)
+cvxpy
