@@ -342,6 +342,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     with tab4:
         st.header("Advanced Analytics & Market Insights")
         # --- Historical Stress Testing ---
+       # --- Historical Stress Testing ---
         st.subheader("Historical Stress Testing")
         st.write("This analysis shows how your current portfolio allocation would have performed during historical market crises compared to the S&P 500 (SPY) benchmark.")
 
@@ -349,25 +350,34 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
             
-            # Get data for the specific crisis period for both portfolio and benchmark
+            # Get data for the specific crisis period
             portfolio_assets = list(weights.index)
-            spy_ticker = ["SPY"]
+            all_tickers_to_fetch = portfolio_assets + ["SPY"]
             
-            crisis_prices = get_price_data(portfolio_assets, start, end)
-            spy_prices = get_price_data(spy_ticker, start, end)
+            all_crisis_prices = get_price_data(all_tickers_to_fetch, start, end)
 
-            if crisis_prices.empty or spy_prices.empty:
-                st.warning("Could not retrieve sufficient data for this period.")
+            if all_crisis_prices.empty or "SPY" not in all_crisis_prices.columns:
+                st.warning("Could not retrieve sufficient market data for this period.")
                 continue
 
+            # --- FIX: Align weights with successfully downloaded asset data ---
+            # This handles cases where some ETFs didn't exist or failed to download
+            available_assets = [t for t in portfolio_assets if t in all_crisis_prices.columns]
+            crisis_prices = all_crisis_prices[available_assets]
+            
+            aligned_weights = weights[available_assets]
+            # Re-normalize the weights of available assets so they sum to 1
+            aligned_weights /= aligned_weights.sum()
+
             # Calculate metrics for user's portfolio
-            portfolio_returns = crisis_prices.pct_change().dot(weights).dropna()
+            portfolio_returns = crisis_prices.pct_change().dot(aligned_weights)
             portfolio_cumulative = (1 + portfolio_returns).cumprod()
             portfolio_return = portfolio_cumulative.iloc[-1] - 1
             portfolio_drawdown = calculate_drawdown(portfolio_cumulative).min()
 
             # Calculate metrics for SPY benchmark
-            spy_returns = spy_prices['SPY'].pct_change().dropna()
+            spy_prices = all_crisis_prices[['SPY']]
+            spy_returns = spy_prices['SPY'].pct_change()
             spy_cumulative = (1 + spy_returns).cumprod()
             spy_return = spy_cumulative.iloc[-1] - 1
             spy_drawdown = calculate_drawdown(spy_cumulative).min()
@@ -385,7 +395,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.metric(label="Max Drawdown", value=f"{spy_drawdown:.2%}", delta_color="off")
             
             st.markdown("---")
-
         st.subheader("Live Market Indicators")
         indicator_cols = st.columns(2)
         with indicator_cols[0]:
