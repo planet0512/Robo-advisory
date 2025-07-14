@@ -341,22 +341,50 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     # --- TAB 4: Advanced Analytics ---
     with tab4:
         st.header("Advanced Analytics & Market Insights")
+        # --- Historical Stress Testing ---
         st.subheader("Historical Stress Testing")
-        stress_results = {}
+        st.write("This analysis shows how your current portfolio allocation would have performed during historical market crises compared to the S&P 500 (SPY) benchmark.")
+
+        # Loop through each crisis scenario
         for name, (start, end) in CRASH_SCENARIOS.items():
-            try:
-                crisis_prices = get_price_data(list(weights.index), start, end)
-                if not crisis_prices.empty:
-                    crisis_returns = crisis_prices.pct_change().dot(weights).dropna()
-                    cumulative_returns = (1 + crisis_returns).cumprod()
-                    max_drawdown = (cumulative_returns / cumulative_returns.cummax() - 1).min()
-                    stress_results[name] = (cumulative_returns.iloc[-1] - 1, max_drawdown)
-            except Exception: stress_results[name] = (None, None)
-        stress_cols = st.columns(len(stress_results))
-        for i, (name, (total_return, max_drawdown)) in enumerate(stress_results.items()):
-            if total_return is not None:
-                stress_cols[i].metric(f"{name} Return", f"{total_return:.2%}")
-                stress_cols[i].metric(f"Max Drawdown", f"{max_drawdown:.2%}")
+            st.markdown(f"#### {name} (`{start}` to `{end}`)")
+            
+            # Get data for the specific crisis period for both portfolio and benchmark
+            portfolio_assets = list(weights.index)
+            spy_ticker = ["SPY"]
+            
+            crisis_prices = get_price_data(portfolio_assets, start, end)
+            spy_prices = get_price_data(spy_ticker, start, end)
+
+            if crisis_prices.empty or spy_prices.empty:
+                st.warning("Could not retrieve sufficient data for this period.")
+                continue
+
+            # Calculate metrics for user's portfolio
+            portfolio_returns = crisis_prices.pct_change().dot(weights).dropna()
+            portfolio_cumulative = (1 + portfolio_returns).cumprod()
+            portfolio_return = portfolio_cumulative.iloc[-1] - 1
+            portfolio_drawdown = calculate_drawdown(portfolio_cumulative).min()
+
+            # Calculate metrics for SPY benchmark
+            spy_returns = spy_prices['SPY'].pct_change().dropna()
+            spy_cumulative = (1 + spy_returns).cumprod()
+            spy_return = spy_cumulative.iloc[-1] - 1
+            spy_drawdown = calculate_drawdown(spy_cumulative).min()
+
+            # Display results in a clean side-by-side layout
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Your Portfolio**")
+                st.metric(label="Total Return", value=f"{portfolio_return:.2%}", delta_color="off")
+                st.metric(label="Max Drawdown", value=f"{portfolio_drawdown:.2%}", delta_color="off")
+            
+            with col2:
+                st.write("**S&P 500 (SPY)**")
+                st.metric(label="Total Return", value=f"{spy_return:.2%}", delta_color="off")
+                st.metric(label="Max Drawdown", value=f"{spy_drawdown:.2%}", delta_color="off")
+            
+            st.markdown("---")
 
         st.subheader("Live Market Indicators")
         indicator_cols = st.columns(2)
