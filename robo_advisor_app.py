@@ -236,44 +236,57 @@ def main():
     st.title("WealthGenius 🧠 AI-Powered Investment Advisor")
     st.markdown("Welcome! This tool uses **Modern Portfolio Theory (MPT)** to build and analyze a diversified investment portfolio tailored to your unique investor profile.")
     st.markdown("---")
-    
+
+    # Initialize session state for user login
+    if "username" not in st.session_state:
+        st.session_state.username = None
+
     all_portfolios = load_portfolios()
-    
-    col1, col2 = st.columns([1, 1])
-    with col1:
+
+    # If no user is logged in, show the login form
+    if st.session_state.username is None:
         st.subheader("Create or Load Portfolio")
-        with st.form("user_form"):
-            username = st.text_input("Enter your name:")
+        with st.form("login_form"):
+            username_input = st.text_input("Enter your name to begin:")
             submitted = st.form_submit_button("Begin")
 
-    if not submitted or not username:
-        st.info("Please enter your name to begin.")
-        st.stop()
+            if submitted and username_input:
+                st.session_state.username = username_input
+                st.rerun() # Rerun the script to enter the main app logic
+        st.stop() # Stop further execution until the form is submitted
+
+    # --- Main App Logic ---
+    # This part runs only after a user has been set in session_state
     
+    username = st.session_state.username
+    
+    # Check if the logged-in user has a portfolio
     if username not in all_portfolios:
-        with col2:
-            risk_profile, answers = display_questionnaire()
-            if risk_profile:
-                new_portfolio = run_portfolio_creation(risk_profile, answers)
-                if new_portfolio:
-                    all_portfolios[username] = new_portfolio
-                    save_portfolios(all_portfolios)
-                    st.success("Your portfolio has been created!")
-                    st.rerun()
+        # If no portfolio, display the questionnaire to create one
+        risk_profile, answers = display_questionnaire()
+        if risk_profile:
+            new_portfolio = run_portfolio_creation(risk_profile, answers)
+            if new_portfolio:
+                all_portfolios[username] = new_portfolio
+                save_portfolios(all_portfolios)
+                st.success("Your portfolio has been created!")
+                st.balloons()
+                # A final rerun to load the dashboard for the new portfolio
+                st.rerun()
     else:
-        st.session_state.username = username
-        display_dashboard(username, all_portfolios[username])
-
-    if st.session_state.get('rebalance_now') and 'username' in st.session_state:
-        username = st.session_state.username
-        portfolio = all_portfolios[username]
-        new_portfolio = run_portfolio_creation(portfolio['risk_profile'], portfolio['profile_answers'])
-        if new_portfolio:
-            all_portfolios[username] = new_portfolio
-            save_portfolios(all_portfolios)
-            st.success("Portfolio has been rebalanced!")
-        st.session_state.rebalance_now = False
-        st.rerun()
-
+        # If a portfolio exists, display the main dashboard
+        if 'rebalance_now' in st.session_state and st.session_state.rebalance_now:
+            portfolio = all_portfolios[username]
+            new_portfolio = run_portfolio_creation(portfolio['risk_profile'], portfolio['profile_answers'])
+            if new_portfolio:
+                all_portfolios[username] = new_portfolio
+                save_portfolios(all_portfolios)
+                st.success("Portfolio has been rebalanced!")
+            # Reset the flag and rerun
+            st.session_state.rebalance_now = False
+            st.rerun()
+        else:
+            display_dashboard(username, all_portfolios[username])
+            
 if __name__ == "__main__":
     main()
