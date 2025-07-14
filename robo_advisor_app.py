@@ -1,6 +1,6 @@
-# robo_advisor_app_v8.py
-# Final version with restored preference-change UI and a new, working
-# GARCH model for machine learning-enhanced volatility forecasting.
+# robo_advisor_app_v8_complete.py
+# Final, complete version with profile changing restored and GARCH ML model added.
+# No sections are omitted.
 
 import json
 import datetime as dt
@@ -52,7 +52,8 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
     end_date = end_date or dt.date.today().isoformat()
     try:
         data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        if data.empty: return pd.DataFrame()
+        if data.empty:
+            return pd.DataFrame()
 
         if isinstance(data.columns, pd.MultiIndex):
             prices = data['Close']
@@ -64,7 +65,7 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
     except Exception:
         return pd.DataFrame()
 
-# ... Other data functions remain the same ...
+
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_cpi_data(start_date="2010-01-01"):
     try:
@@ -94,17 +95,9 @@ def save_portfolios(portfolios):
 # CORE FINANCE & ML LOGIC
 # ======================================================================================
 
-# <<< NEW FEATURE: Working GARCH Volatility Forecasting >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def forecast_garch_covariance(returns: pd.DataFrame) -> pd.DataFrame:
-    """
-    Fits a GARCH(1,1) model to each asset and forecasts variance.
-    Returns an annualized covariance matrix with GARCH variances on the diagonal.
-    """
-    # Scale returns for GARCH model stability
     scaled_returns = returns * 100
-    
-    # Forecast variance for each asset
     forecasted_variances = {}
     for col in scaled_returns.columns:
         model = arch_model(scaled_returns[col].dropna(), p=1, q=1, vol='Garch', dist='Normal')
@@ -112,18 +105,13 @@ def forecast_garch_covariance(returns: pd.DataFrame) -> pd.DataFrame:
         forecast = res.forecast(horizon=1)
         forecasted_variances[col] = forecast.variance.iloc[-1, 0]
 
-    # Un-scale the variances and create the covariance matrix
-    # Use sample correlation but with GARCH variances
     corr_matrix = returns.corr()
     std_devs = pd.Series({k: np.sqrt(v / 10000) for k, v in forecasted_variances.items()})
     garch_cov = corr_matrix.mul(std_devs, axis=0).mul(std_devs, axis=1) * 252
-    
     return garch_cov
 
 def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool = False) -> pd.Series:
     mu = returns.mean().to_numpy() * 252
-    
-    # Use GARCH for covariance if toggled, otherwise use standard sample covariance
     if use_garch:
         Sigma = forecast_garch_covariance(returns).to_numpy()
     else:
@@ -133,7 +121,6 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
     w = cp.Variable(len(mu))
     objective = cp.Maximize(mu @ w - 0.5 * gamma * cp.quad_form(w, Sigma))
     constraints = [cp.sum(w) == 1, w >= 0, w <= 0.35]
-    
     try:
         prob = cp.Problem(objective, constraints)
         prob.solve(solver=cp.SCS)
@@ -146,7 +133,6 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str, use_garch: bool
         return pd.Series(1/len(returns.columns), index=returns.columns)
 
 def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, float]:
-    # ... (This function is unchanged) ...
     portfolio_returns_ts = returns.dot(weights)
     expected_return = np.sum(returns.mean() * weights) * 252
     portfolio_volatility = portfolio_returns_ts.std() * np.sqrt(252)
@@ -161,7 +147,6 @@ def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, fl
 
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
-    # ... (This function is unchanged) ...
     try:
         spy_prices_df = get_price_data(["SPY"], start_date=start_date)
         if spy_prices_df.empty or "SPY" not in spy_prices_df.columns: return None
@@ -180,7 +165,6 @@ def detect_market_regimes(start_date="2010-01-01"):
         return final_df
     except Exception: return None
 
-# ... (Other helper functions like run_monte_carlo, etc. are unchanged) ...
 def run_monte_carlo(initial_value, er, vol, years, simulations):
     dt = 1/252
     num_steps = years * 252
@@ -222,47 +206,130 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     weights = pd.Series(portfolio["weights"])
 
     with tab1:
-        # ... (Metrics and chart display unchanged) ...
+        last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
+        if (dt.date.today() - last_rebalanced_date).days > 180:
+            st.warning("Your portfolio is over 6 months old and may need rebalancing.")
         profile_cols = st.columns(2)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
         st.markdown("---")
         metric_cols = st.columns(5)
-        # ... (Metrics display unchanged) ...
+        metric_cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
+        metric_cols[1].metric("Annual Volatility", f"{portfolio['metrics']['expected_volatility']:.2%}")
+        metric_cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
+        metric_cols[3].metric("Daily VaR (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
+        metric_cols[4].metric("Daily CVaR (95%)", f"{portfolio['metrics']['conditional_value_at_risk_95']:.2%}", help="The expected loss on days within the worst 5% of scenarios.")
+        st.markdown("---")
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, textinfo="label+percent"))
         fig_pie.update_layout(showlegend=False, title_text="Current Portfolio Allocation", title_x=0.5)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-        # <<< FEATURE RESTORED: UI for changing profile and rebalancing >>>
         with st.expander("⚙️ Settings, Rebalancing & Profile Change"):
             st.write("Update your risk profile or rebalance to the latest market data.")
-            
-            # Get current settings
             current_profile_index = list(RISK_AVERSION_FACTORS.keys()).index(portfolio['risk_profile'])
             was_garch_used = portfolio.get('used_garch', False)
-            
-            # UI components
             new_profile = st.selectbox("Change risk profile:", options=list(RISK_AVERSION_FACTORS.keys()), index=current_profile_index)
-            use_garch_rebalance = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)", value=was_garch_used)
-
-            # Rebalance button
+            use_garch_rebalance = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)", value=was_garch_used, key="rebalance_garch")
             if st.button("Update and Rebalance Portfolio", type="primary"):
-                st.session_state.rebalance_request = {
-                    "new_profile": new_profile,
-                    "use_garch": use_garch_rebalance
-                }
+                st.session_state.rebalance_request = {"new_profile": new_profile, "use_garch": use_garch_rebalance}
                 st.rerun()
 
-    # ... (Other tabs like Future Projection, etc. are unchanged) ...
     with tab2:
         st.header("Future Growth Simulation (Monte Carlo)")
-        # ... full tab code ...
+        sim_cols = st.columns([1, 3])
+        initial_investment = sim_cols[0].number_input("Initial Investment ($)", 1000, 1000000, 10000, 1000)
+        simulation_years = sim_cols[0].slider("Investment Horizon (Years)", 1, 40, 10)
+        sim_results = run_monte_carlo(initial_investment, portfolio['metrics']['expected_return'], portfolio['metrics']['expected_volatility'], simulation_years, 500)
+        with sim_cols[1]:
+            fig_sim = go.Figure()
+            fig_sim.add_traces([go.Scatter(x=sim_results.index/252, y=sim_results[col], line_color='lightgrey', showlegend=False) for col in sim_results.columns[:100]])
+            quantiles = sim_results.quantile([0.1, 0.5, 0.9], axis=1).T
+            for q_val, q_name in zip([0.1, 0.5, 0.9], ["10th Percentile", "Median", "90th Percentile"]):
+                 fig_sim.add_trace(go.Scatter(x=sim_results.index/252, y=quantiles[q_val], line=dict(width=3), name=q_name))
+            fig_sim.update_layout(title_text=f"Projected Growth of ${initial_investment:,.0f}", yaxis_tickformat="$,.0f", xaxis_title="Years", yaxis_title="Portfolio Value ($)")
+            st.plotly_chart(fig_sim, use_container_width=True)
+
     with tab3:
         st.header("Performance & Risk Analysis")
-        # ... full tab code ...
+        all_prices = get_price_data(list(weights.index) + ["SPY"], "2018-01-01")
+        if not all_prices.empty and not all_prices.isnull().all().all():
+            valid_assets = [col for col in weights.index if col in all_prices.columns and not all_prices[col].isnull().all()]
+            returns = all_prices[valid_assets].pct_change().dropna()
+            if not returns.empty:
+                st.subheader("Historical Performance Backtest")
+                aligned_weights = weights[valid_assets].copy()
+                aligned_weights /= aligned_weights.sum()
+                portfolio_performance = (1 + returns.dot(aligned_weights)).cumprod()
+                spy_performance = (1 + all_prices["SPY"].pct_change().dropna()).cumprod()
+                fig_backtest = go.Figure()
+                fig_backtest.add_trace(go.Scatter(x=portfolio_performance.index, y=portfolio_performance, name='Your Portfolio'))
+                fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, name='S&P 500 (SPY)', line=dict(dash='dash')))
+                fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark (Growth of $1)", yaxis_title="Cumulative Growth")
+                st.plotly_chart(fig_backtest, use_container_width=True)
+                st.subheader("Sharpe Ratio Comparison")
+                asset_returns = returns.mean() * 252
+                asset_std_dev = returns.std() * np.sqrt(252)
+                individual_sharpes = (asset_returns / asset_std_dev).dropna()
+                sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
+                sharpe_ratios_df.loc['Your Portfolio'] = portfolio['metrics']['sharpe_ratio']
+                st.bar_chart(sharpe_ratios_df)
+                st.subheader("Efficient Frontier")
+                frontier_df = calculate_efficient_frontier(returns)
+                fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier & Your Portfolio')
+                fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
+                st.plotly_chart(fig_frontier, use_container_width=True)
+        else:
+            st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
+    
     with tab4:
         st.header("Portfolio Intelligence")
-        # ... full tab code ...
+        st.subheader("Historical Stress Testing")
+        for name, (start, end) in CRASH_SCENARIOS.items():
+            st.markdown(f"#### {name} (`{start}` to `{end}`)")
+            all_assets_for_period = list(weights.index) + ["SPY"]
+            crisis_prices = get_price_data(all_assets_for_period, start, end)
+            
+            if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
+                st.warning(f"Could not retrieve valid market data for the {name} period.")
+                st.markdown("---")
+                continue
+
+            available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
+            if not available_portfolio_assets:
+                st.warning(f"None of your portfolio's assets existed during the {name} period.")
+                st.markdown("---")
+                continue
+            
+            aligned_weights = weights[available_portfolio_assets].copy()
+            aligned_weights /= aligned_weights.sum()
+            portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
+            portfolio_cumulative = (1 + portfolio_returns).cumprod()
+            spy_returns = crisis_prices['SPY'].pct_change()
+            spy_cumulative = (1 + spy_returns).cumprod()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Your Portfolio Total Return", f"{portfolio_cumulative.iloc[-1] - 1:.2%}")
+                st.metric("Your Portfolio Max Drawdown", f"{calculate_drawdown(portfolio_cumulative).min():.2%}")
+            with col2:
+                st.metric("S&P 500 Total Return", f"{spy_cumulative.iloc[-1] - 1:.2%}")
+                st.metric("S&P 500 Max Drawdown", f"{calculate_drawdown(spy_cumulative).min():.2%}")
+            st.markdown("---")
+
+        st.subheader("Machine Learning: Market Regime Detection")
+        regime_data = detect_market_regimes()
+        if regime_data is not None:
+            current_regime = regime_data['regime_label'].iloc[-1]
+            st.info(f"The HMM model indicates the market is currently in a **{current_regime}** state.")
+            fig_regime = go.Figure()
+            fig_regime.add_trace(go.Scatter(x=regime_data.index, y=regime_data['Close'], mode='lines', name='SPY Price', line_color='black', showlegend=False))
+            colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
+            for state in colors:
+                fig_regime.add_trace(go.Bar(name=f'{state} Period', x=[None], y=[None], marker_color=colors[state]))
+                for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
+                    fig_regime.add_vrect(x0=g.index.min(), x1=g.index.max(), fillcolor=colors[state], line_width=0, annotation_text=None)
+            st.plotly_chart(fig_regime, use_container_width=True)
+        else:
+            st.warning("Market regime analysis is currently unavailable due to a data issue.")
 
 
 def display_questionnaire() -> Tuple[str, bool, Dict]:
@@ -270,21 +337,14 @@ def display_questionnaire() -> Tuple[str, bool, Dict]:
     answers = {key: st.radio(f"**{key.replace('_', ' ')}**", options) for key, options in QUESTIONNAIRE.items()}
     score = sum(QUESTIONNAIRE[key].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
-    
-    # <<< FEATURE ADDED: GARCH toggle for new users >>>
-    use_garch = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)")
-    
+    use_garch = st.toggle("🧠 Use ML-Enhanced Volatility Forecast (GARCH)", key="new_garch")
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, answers
     return "", False, {}
 
 def run_portfolio_creation(risk_profile: str, use_garch: bool, profile_answers: Dict) -> Dict | None:
     spinner_msg = f"Building your '{risk_profile}' portfolio"
-    if use_garch:
-        spinner_msg += " with GARCH volatility..."
-    else:
-        spinner_msg += "..."
-        
+    spinner_msg += " with GARCH volatility..." if use_garch else "..."
     with st.spinner(spinner_msg):
         prices = get_price_data(MASTER_ASSET_LIST, "2018-01-01")
         if prices.empty: 
@@ -305,7 +365,7 @@ def run_portfolio_creation(risk_profile: str, use_garch: bool, profile_answers: 
                 "metrics": metrics,
                 "last_rebalanced_date": dt.date.today().isoformat(),
                 "profile_answers": profile_answers,
-                "used_garch": use_garch  # Save the GARCH preference
+                "used_garch": use_garch
             }
     return None
 
@@ -318,7 +378,6 @@ def main():
     st.markdown("Welcome! This tool uses Modern Portfolio Theory (MPT) and Machine Learning models to build and analyze a diversified investment portfolio.")
     st.markdown("---")
     
-    # Initialize session state keys
     if "username" not in st.session_state:
         st.session_state.username = None
     if "rebalance_request" not in st.session_state:
@@ -326,7 +385,6 @@ def main():
 
     all_portfolios = load_portfolios()
 
-    # Handle Login
     if st.session_state.username is None:
         st.subheader("Create or Load Portfolio")
         with st.form("login_form"):
@@ -339,22 +397,18 @@ def main():
     
     username = st.session_state.username
     
-    # Handle Rebalancing / Profile Change
     if st.session_state.rebalance_request:
         request = st.session_state.rebalance_request
         profile_answers = all_portfolios[username].get("profile_answers", {})
-        
         new_portfolio = run_portfolio_creation(request["new_profile"], request["use_garch"], profile_answers)
         if new_portfolio:
             all_portfolios[username] = new_portfolio
             save_portfolios(all_portfolios)
             st.success(f"Portfolio updated to '{request['new_profile']}' profile!")
             st.balloons()
-        
-        st.session_state.rebalance_request = None # Reset the request
+        st.session_state.rebalance_request = None
         st.rerun()
 
-    # Handle New User
     elif username not in all_portfolios:
         risk_profile, use_garch, answers = display_questionnaire()
         if risk_profile:
@@ -365,7 +419,6 @@ def main():
                 st.success("Your portfolio has been created!")
                 st.balloons()
                 st.rerun()
-    # Display Dashboard for Existing User
     else:
         display_dashboard(username, all_portfolios[username])
 
