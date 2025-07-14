@@ -13,7 +13,6 @@ arch
 hmmlearn
 scikit-learn
 scipy
-pypfopt
 
-# Optimization Solvers (dependency for PyPortfolioOpt)
+# Optimization Solver
 cvxpy
