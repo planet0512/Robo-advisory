@@ -1,18 +1,14 @@
-# Core App Framework & Data Handling
 streamlit
 pandas
 numpy
 yfinance
 pandas-datareader
 
-# Plotting & Visualization
 plotly
 
-# Financial Modeling & Machine Learning
 arch
 hmmlearn
 scikit-learn
 scipy
 
-# Optimization Solver
 cvxpy
