@@ -1,5 +1,6 @@
-# robo_advisor_app_v6.py
-# Final, robust version with a resilient data-fetching function to prevent KeyErrors.
+# robo_advisor_app_v7.py
+# Final, definitive version. All data fetching is now channeled through a single
+# robust function to prevent all data-related KeyErrors.
 
 import json
 import datetime as dt
@@ -23,12 +24,8 @@ from hmmlearn import hmm
 
 st.set_page_config(page_title="WealthGenius | AI Advisor", page_icon="🧠", layout="wide")
 PORTFOLIO_FILE = Path("user_portfolios.json")
-
 RISK_AVERSION_FACTORS = {"Conservative": 4.0, "Balanced": 2.5, "Aggressive": 1.0}
-
-MASTER_ASSET_LIST = [
-    "VTI", "VXUS", "BND", "QUAL", "AVUV", "MTUM", "USMV"
-]
+MASTER_ASSET_LIST = ["VTI", "VXUS", "BND", "QUAL", "AVUV", "MTUM", "USMV"]
 
 QUESTIONNAIRE = {
     "Financial Goal": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
@@ -52,10 +49,6 @@ CRASH_SCENARIOS = {
 
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
-    """
-    Fetches and sanitizes price data from yfinance, always returning a
-    DataFrame of close prices with tickers as columns.
-    """
     end_date = end_date or dt.date.today().isoformat()
     try:
         data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
@@ -68,11 +61,9 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
             prices = data[['Close']]
             if len(tickers) == 1:
                 prices = prices.rename(columns={'Close': tickers[0]})
-
         return prices.ffill().dropna(axis=1, how="all")
     except Exception:
         return pd.DataFrame()
-
 
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_cpi_data(start_date="2010-01-01"):
@@ -108,10 +99,8 @@ def optimize_portfolio(returns: pd.DataFrame, risk_profile: str) -> pd.Series:
     Sigma = returns.cov().to_numpy() * 252
     gamma = cp.Parameter(nonneg=True, value=RISK_AVERSION_FACTORS.get(risk_profile, 2.5))
     w = cp.Variable(len(mu))
-    
     objective = cp.Maximize(mu @ w - 0.5 * gamma * cp.quad_form(w, Sigma))
     constraints = [cp.sum(w) == 1, w >= 0, w <= 0.35]
-    
     try:
         prob = cp.Problem(objective, constraints)
         prob.solve(solver=cp.SCS)
@@ -136,30 +125,38 @@ def analyze_portfolio(weights: pd.Series, returns: pd.DataFrame) -> Dict[str, fl
         "conditional_value_at_risk_95": cvar_95,
     }
 
+# <<< DEFINITIVE FIX: Using the robust get_price_data function here too >>>
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def detect_market_regimes(start_date="2010-01-01"):
     try:
-        spy_df = yf.download("SPY", start=start_date, progress=False, auto_adjust=True)
-        if spy_df.empty or 'Close' not in spy_df.columns:
+        spy_prices_df = get_price_data(["SPY"], start_date=start_date)
+        if spy_prices_df.empty or "SPY" not in spy_prices_df.columns:
             return None
-        spy_prices = spy_df['Close']
+
+        spy_prices = spy_prices_df["SPY"]
         returns = np.log(spy_prices).diff().dropna()
         if returns.empty: return None
 
         model = hmm.GaussianHMM(n_components=2, covariance_type="full", n_iter=1000, random_state=42)
         model.fit(returns.to_numpy().reshape(-1, 1))
         hidden_states = model.predict(returns.to_numpy().reshape(-1, 1))
+        
         vols = [np.sqrt(model.covars_[i][0][0]) for i in range(model.n_components)]
         high_vol_state = np.argmax(vols)
+        
         regime_df = pd.DataFrame({'regime_label': ['High Volatility' if s == high_vol_state else 'Low Volatility' for s in hidden_states]}, index=returns.index)
         
-        final_df = pd.DataFrame(spy_prices).join(regime_df)
+        final_df = pd.DataFrame(spy_prices)
+        final_df = final_df.join(regime_df)
         final_df['regime_label'] = final_df['regime_label'].ffill()
+        
+        # Rename column to 'Close' for the plotting function
+        final_df = final_df.rename(columns={'SPY': 'Close'})
         return final_df
     except Exception:
         return None
 
-def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, simulations: int) -> pd.DataFrame:
+def run_monte_carlo(initial_value, er, vol, years, simulations):
     dt = 1/252
     num_steps = years * 252
     drift = (er - 0.5 * vol**2) * dt
@@ -172,7 +169,7 @@ def run_monte_carlo(initial_value: float, er: float, vol: float, years: int, sim
     return pd.DataFrame(price_paths)
 
 @st.cache_data
-def calculate_efficient_frontier(returns: pd.DataFrame, num_portfolios: int = 2000):
+def calculate_efficient_frontier(returns, num_portfolios=2000):
     results = []
     num_assets = len(returns.columns)
     mean_returns = returns.mean() * 252
@@ -186,7 +183,7 @@ def calculate_efficient_frontier(returns: pd.DataFrame, num_portfolios: int = 20
         results.append([ret, vol, sharpe])
     return pd.DataFrame(results, columns=['return', 'volatility', 'sharpe'])
 
-def calculate_drawdown(performance_series: pd.Series) -> pd.Series:
+def calculate_drawdown(performance_series):
     running_max = performance_series.cummax()
     return (performance_series / running_max) - 1
 
@@ -243,31 +240,29 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         if not all_prices.empty and not all_prices.isnull().all().all():
             valid_assets = [col for col in weights.index if col in all_prices.columns and not all_prices[col].isnull().all()]
             returns = all_prices[valid_assets].pct_change().dropna()
-            if returns.empty:
-                st.warning("Could not calculate returns for backtesting due to missing data.")
-                return
-            st.subheader("Historical Performance Backtest")
-            aligned_weights = weights[valid_assets]
-            aligned_weights /= aligned_weights.sum()
-            portfolio_performance = (1 + returns.dot(aligned_weights)).cumprod()
-            spy_performance = (1 + all_prices["SPY"].pct_change().dropna()).cumprod()
-            fig_backtest = go.Figure()
-            fig_backtest.add_trace(go.Scatter(x=portfolio_performance.index, y=portfolio_performance, name='Your Portfolio'))
-            fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, name='S&P 500 (SPY)', line=dict(dash='dash')))
-            fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark (Growth of $1)", yaxis_title="Cumulative Growth")
-            st.plotly_chart(fig_backtest, use_container_width=True)
-            st.subheader("Sharpe Ratio Comparison")
-            asset_returns = returns.mean() * 252
-            asset_std_dev = returns.std() * np.sqrt(252)
-            individual_sharpes = (asset_returns / asset_std_dev).dropna()
-            sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
-            sharpe_ratios_df.loc['Your Portfolio'] = portfolio['metrics']['sharpe_ratio']
-            st.bar_chart(sharpe_ratios_df)
-            st.subheader("Efficient Frontier")
-            frontier_df = calculate_efficient_frontier(returns)
-            fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier & Your Portfolio')
-            fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
-            st.plotly_chart(fig_frontier, use_container_width=True)
+            if not returns.empty:
+                st.subheader("Historical Performance Backtest")
+                aligned_weights = weights[valid_assets].copy()
+                aligned_weights /= aligned_weights.sum()
+                portfolio_performance = (1 + returns.dot(aligned_weights)).cumprod()
+                spy_performance = (1 + all_prices["SPY"].pct_change().dropna()).cumprod()
+                fig_backtest = go.Figure()
+                fig_backtest.add_trace(go.Scatter(x=portfolio_performance.index, y=portfolio_performance, name='Your Portfolio'))
+                fig_backtest.add_trace(go.Scatter(x=spy_performance.index, y=spy_performance, name='S&P 500 (SPY)', line=dict(dash='dash')))
+                fig_backtest.update_layout(title="Performance vs. S&P 500 Benchmark (Growth of $1)", yaxis_title="Cumulative Growth")
+                st.plotly_chart(fig_backtest, use_container_width=True)
+                st.subheader("Sharpe Ratio Comparison")
+                asset_returns = returns.mean() * 252
+                asset_std_dev = returns.std() * np.sqrt(252)
+                individual_sharpes = (asset_returns / asset_std_dev).dropna()
+                sharpe_ratios_df = pd.DataFrame(individual_sharpes, columns=['Sharpe Ratio'])
+                sharpe_ratios_df.loc['Your Portfolio'] = portfolio['metrics']['sharpe_ratio']
+                st.bar_chart(sharpe_ratios_df)
+                st.subheader("Efficient Frontier")
+                frontier_df = calculate_efficient_frontier(returns)
+                fig_frontier = px.scatter(frontier_df, x='volatility', y='return', color='sharpe', title='Efficient Frontier & Your Portfolio')
+                fig_frontier.add_trace(go.Scatter(x=[portfolio['metrics']['expected_volatility']], y=[portfolio['metrics']['expected_return']], mode='markers', marker=dict(color='red', size=15, symbol='star'), name='Your Portfolio'))
+                st.plotly_chart(fig_frontier, use_container_width=True)
         else:
             st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
@@ -293,12 +288,10 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             
             aligned_weights = weights[available_portfolio_assets].copy()
             aligned_weights /= aligned_weights.sum()
-            
             portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
             portfolio_cumulative = (1 + portfolio_returns).cumprod()
             spy_returns = crisis_prices['SPY'].pct_change()
             spy_cumulative = (1 + spy_returns).cumprod()
-
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Your Portfolio Total Return", f"{portfolio_cumulative.iloc[-1] - 1:.2%}")
