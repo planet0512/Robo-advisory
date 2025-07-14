@@ -1,6 +1,6 @@
-# robo_advisor_app_v12.py
-# Final, complete, and fully integrated version. Includes Black-Litterman,
-# GARCH, a full UI for rebalancing, and all dashboard tabs. No sections omitted.
+# robo_advisor_app_v13_complete.py
+# Final, complete version with all features, including automated momentum-based
+# views for the Black-Litterman model. No sections are omitted.
 
 import json
 import datetime as dt
@@ -21,12 +21,10 @@ from hmmlearn import hmm
 # ======================================================================================
 # CONFIGURATION
 # ======================================================================================
-
 st.set_page_config(page_title="WealthGenius | AI Advisor", page_icon="🧠", layout="wide")
 PORTFOLIO_FILE = Path("user_portfolios.json")
 RISK_AVERSION_FACTORS = {"Conservative": 4.0, "Balanced": 2.5, "Aggressive": 1.0}
 MASTER_ASSET_LIST = ["VTI", "VXUS", "BND", "QUAL", "AVUV", "MTUM", "USMV"]
-
 QUESTIONNAIRE = {
     "Financial Goal": {
         "question": "What is your primary financial goal?",
@@ -40,11 +38,7 @@ QUESTIONNAIRE = {
     },
     "Risk Tolerance": {
         "question": "How would you react if your portfolio suddenly dropped 20%?",
-        "options": [
-            "Sell all to prevent further loss.",
-            "Hold on and wait for it to recover.",
-            "Buy more while prices are low.",
-        ],
+        "options": ["Sell all to prevent further loss.", "Hold on and wait for it to recover.", "Buy more while prices are low."],
         "help": "This question helps gauge your emotional response to risk. Panic-selling during a downturn is one of the biggest risks to long-term success."
     },
 }
@@ -53,22 +47,24 @@ CRASH_SCENARIOS = {
     "COVID-19 Crash": ("2020-02-19", "2020-03-23"),
     "Dot-Com Bubble Burst": ("2000-03-10", "2002-10-09"),
 }
+
 # ======================================================================================
 # DATA & PERSISTENCE
 # ======================================================================================
-
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def get_price_data(tickers: List[str], start_date: str, end_date: str = None) -> pd.DataFrame:
     end_date = end_date or dt.date.today().isoformat()
     try:
         data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if data.empty: return pd.DataFrame()
-        if isinstance(data.columns, pd.MultiIndex): prices = data['Close']
+        if isinstance(data.columns, pd.MultiIndex):
+            prices = data['Close']
         else:
             prices = data[['Close']]
             if len(tickers) == 1: prices = prices.rename(columns={'Close': tickers[0]})
         return prices.ffill().dropna(axis=1, how="all")
-    except Exception: return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
 
 @st.cache_data(ttl=dt.timedelta(days=1))
 def get_market_caps(tickers: List[str]) -> Dict[str, float]:
@@ -78,14 +74,14 @@ def get_market_caps(tickers: List[str]) -> Dict[str, float]:
             caps[t] = yf.Ticker(t).info.get('marketCap', 0)
         except Exception:
             caps[t] = 0
-    # If a major ticker fails, we might fall back to equal weighting for market weights
     if caps.get("VTI", 0) == 0:
         return {t: 1.0 for t in tickers}
     return caps
 
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_cpi_data(start_date="2010-01-01"):
-    try: return web.DataReader("CPIAUCSL", "fred", start_date).pct_change(12) * 100
+    try:
+        return web.DataReader("CPIAUCSL", "fred", start_date).pct_change(12) * 100
     except Exception: return None
 
 @st.cache_data(ttl=dt.timedelta(hours=4))
@@ -104,12 +100,32 @@ def load_portfolios():
     return {}
 
 def save_portfolios(portfolios):
-    try: PORTFOLIO_FILE.write_text(json.dumps(portfolios, indent=2))
-    except Exception as e: st.error(f"Failed to save portfolios: {e}")
+    try:
+        PORTFOLIO_FILE.write_text(json.dumps(portfolios, indent=2))
+    except Exception as e:
+        st.error(f"Failed to save portfolios: {e}")
 
 # ======================================================================================
 # CORE FINANCE & ML LOGIC
 # ======================================================================================
+@st.cache_data(ttl=dt.timedelta(hours=12))
+def generate_momentum_views(prices: pd.DataFrame) -> Dict[str, float]:
+    momentum_views = {}
+    # Use a 12-month period for momentum calculation
+    returns = prices.pct_change(periods=252).iloc[-1]
+    
+    factors = {"quality_view": "QUAL", "small_cap_view": "AVUV", "momentum_view": "MTUM"}
+    benchmark_return = returns.get("VTI", 0)
+
+    for view_name, ticker in factors.items():
+        factor_return = returns.get(ticker, 0)
+        outperformance = (factor_return - benchmark_return) * 100
+        scaled_view = np.clip(outperformance / 5, -5.0, 5.0)
+        momentum_views[view_name] = round(scaled_view * 2) / 2
+        
+    st.info("Generated Views Based on 12-Month Momentum:")
+    st.json(momentum_views)
+    return momentum_views
 
 @st.cache_data(ttl=dt.timedelta(hours=12))
 def forecast_garch_covariance(returns: pd.DataFrame) -> pd.DataFrame:
@@ -152,22 +168,14 @@ def optimize_black_litterman(returns: pd.DataFrame, risk_profile: str, views: Di
         risk_aversion = RISK_AVERSION_FACTORS.get(risk_profile, 2.5)
         pi = risk_aversion * S.dot(market_weights)
 
-        view_confidences, q_list, p_rows = [], [], []
-        
-        view_map = {
-            'quality_view': {'asset': 'QUAL', 'benchmark': 'VTI'},
-            'small_cap_view': {'asset': 'AVUV', 'benchmark': 'VTI'},
-            'momentum_view': {'asset': 'MTUM', 'benchmark': 'VTI'}
-        }
+        view_map = {'quality_view': 'QUAL', 'small_cap_view': 'AVUV', 'momentum_view': 'MTUM'}
+        q_list, p_rows = [], []
 
-        for view_name, assets in view_map.items():
-            if views.get(view_name, 0) != 0 and assets['asset'] in returns.columns and assets['benchmark'] in returns.columns:
+        for view_name, asset in view_map.items():
+            if views.get(view_name, 0) != 0 and asset in returns.columns and 'VTI' in returns.columns:
                 q_list.append(views[view_name] / 100)
-                p_row = pd.Series(0.0, index=returns.columns)
-                p_row[assets['asset']] = 1.0
-                p_row[assets['benchmark']] = -1.0
+                p_row = pd.Series(0.0, index=returns.columns); p_row[asset] = 1.0; p_row['VTI'] = -1.0
                 p_rows.append(p_row)
-                view_confidences.append(0.3) 
 
         if q_list:
             Q, P = np.array(q_list), np.array(p_rows)
@@ -176,9 +184,7 @@ def optimize_black_litterman(returns: pd.DataFrame, risk_profile: str, views: Di
             pi_series = pd.Series(pi, index=returns.columns)
             mu_bl = pi_series + (tau * S @ P.T) @ np.linalg.inv(tau * P @ S @ P.T + Omega) @ (Q - P @ pi_series)
             mu = mu_bl.to_numpy()
-        else:
-            st.warning("No views provided. Black-Litterman is defaulting to market equilibrium returns.")
-            mu = pi
+        else: mu = pi
 
         Sigma = S.to_numpy()
         gamma = cp.Parameter(nonneg=True, value=risk_aversion)
@@ -262,9 +268,10 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         profile_cols = st.columns(4)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
-        profile_cols[2].metric("Optimization Model", portfolio.get('model_choice', 'Mean-Variance'))
+        profile_cols[2].metric("Optimization Model", portfolio.get('model_choice', 'Mean-Variance (Standard)'))
         garch_status = "Active (GARCH)" if portfolio.get('used_garch', False) else "Inactive"
         profile_cols[3].metric("🧠 ML Volatility", garch_status)
+        
         st.markdown("---")
         metric_cols = st.columns(5)
         metric_cols[0].metric("Expected Annual Return", f"{portfolio['metrics']['expected_return']:.2%}")
@@ -272,29 +279,37 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         metric_cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
         metric_cols[3].metric("Daily VaR (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
         metric_cols[4].metric("Daily CVaR (95%)", f"{portfolio['metrics']['conditional_value_at_risk_95']:.2%}", help="The expected loss on days within the worst 5% of scenarios.")
+        
         st.markdown("---")
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, textinfo="label+percent"))
         fig_pie.update_layout(showlegend=False, title_text="Current Portfolio Allocation", title_x=0.5)
         st.plotly_chart(fig_pie, use_container_width=True)
+
         with st.expander("⚙️ Settings, Rebalancing & Profile Change"):
             st.write("Update your portfolio settings and rebalance to the latest market data.")
             current_profile_index = list(RISK_AVERSION_FACTORS.keys()).index(portfolio['risk_profile'])
             new_profile = st.selectbox("Change risk profile:", list(RISK_AVERSION_FACTORS.keys()), index=current_profile_index, key="rebal_profile")
             
-            model_options = ["Mean-Variance (Standard)", "Black-Litterman (With Your Views)"]
+            model_options = ["Mean-Variance (Standard)", "Black-Litterman"]
             current_model_index = model_options.index(portfolio.get('model_choice', 'Mean-Variance (Standard)'))
             model_choice_rebal = st.selectbox("Change optimization model:", model_options, index=current_model_index, key="rebal_model")
 
             views_rebal = portfolio.get('views', {})
-            if model_choice_rebal == "Black-Litterman (With Your Views)":
-                with st.container(border=True):
-                    st.markdown("###### Update Your Investment Views")
-                    views_rebal['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('quality_view', 0.0), 0.5, key="rebal_qual")
-                    views_rebal['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('small_cap_view', 0.0), 0.5, key="rebal_scv")
-                    views_rebal['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('momentum_view', 0.0), 0.5, key="rebal_mom")
-            
-            use_garch_rebalance = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)", value=portfolio.get('used_garch', False), key="rebal_garch")
-            
+            use_garch_rebalance = portfolio.get('used_garch', False)
+
+            if model_choice_rebal == "Black-Litterman":
+                view_type_rebal = st.radio("Update your investment views:", ["Use automatically generated momentum views", "Update my manual views"], horizontal=True, key="rebal_view_type")
+                if "manual" in view_type_rebal:
+                    with st.container(border=True):
+                        st.markdown("###### Update Your Manual Investment Views")
+                        views_rebal['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('quality_view', 0.0), 0.5, key="rebal_qual")
+                        views_rebal['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('small_cap_view', 0.0), 0.5, key="rebal_scv")
+                        views_rebal['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, views_rebal.get('momentum_view', 0.0), 0.5, key="rebal_mom")
+                else:
+                    views_rebal = {"auto_views": True}
+            else: # Mean-Variance
+                use_garch_rebalance = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)", value=use_garch_rebalance, key="rebal_garch")
+
             if st.button("Update and Rebalance Portfolio", type="primary"):
                 st.session_state.rebalance_request = {"new_profile": new_profile, "use_garch": use_garch_rebalance, "model_choice": model_choice_rebal, "views": views_rebal}
                 st.rerun()
@@ -303,8 +318,8 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         st.header("Future Growth Simulation (Monte Carlo)")
         sim_cols = st.columns([1, 3])
         with sim_cols[0]:
-            initial_investment = st.number_input("Initial Investment ($)", 1000, 1000000, 10000, 1000)
-            simulation_years = st.slider("Investment Horizon (Years)", 1, 40, 10)
+            initial_investment = st.number_input("Initial Investment ($)", 1000, 1000000, 10000, 1000, key="mc_invest")
+            simulation_years = st.slider("Investment Horizon (Years)", 1, 40, 10, key="mc_years")
         sim_results = run_monte_carlo(initial_investment, portfolio['metrics']['expected_return'], portfolio['metrics']['expected_volatility'], simulation_years, 500)
         with sim_cols[1]:
             fig_sim = go.Figure()
@@ -398,24 +413,36 @@ def display_questionnaire() -> Tuple[str, bool, str, dict, Dict]:
     answers = {}
     for key, value in QUESTIONNAIRE.items():
         answers[key] = st.radio(f"**{value['question']}**", value['options']); st.caption(f"_{value['help']}_"); st.markdown("---")
+    
     score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
-    st.markdown("##### Portfolio Construction Method")
-    model_choice = st.selectbox("Choose your portfolio optimization model:", ["Mean-Variance (Standard)", "Black-Litterman (With Your Views)"], help="Mean-Variance uses historical data. Black-Litterman blends historical data with your specific views on asset performance.")
-    views = {}
-    if model_choice == "Black-Litterman (With Your Views)":
-        with st.container(border=True):
-            st.markdown("###### Express Your Investment Views")
-            st.write("Indicate how much you expect certain factors to outperform or underperform the broad US market (VTI).")
-            views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
-            views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
-            views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
     
-    use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
-    st.caption("_This uses a GARCH model to create a more dynamic forecast of market risk._")
+    st.markdown("##### Portfolio Construction Method")
+    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
+    
+    views = {}
+    use_garch = False
+    if model_choice == "Black-Litterman":
+        view_type = st.radio(
+            "How would you like to set your investment views?",
+            ["Generate views automatically based on market momentum (Recommended)", "I want to enter my views manually"],
+            horizontal=True, key="view_type_new"
+        )
+        if "manually" in view_type:
+            with st.container(border=True):
+                st.markdown("###### Express Your Manual Investment Views")
+                views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
+                views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
+                views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
+        else:
+            views = {"auto_views": True}
+    else:
+        use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
+        st.caption("_This uses a GARCH model to create a more dynamic forecast of market risk._")
     
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, model_choice, views, answers
+        
     return "", False, "", {}, {}
 
 def run_portfolio_creation(risk_profile: str, use_garch: bool, model_choice: str, views: Dict, profile_answers: Dict) -> Dict | None:
@@ -426,14 +453,22 @@ def run_portfolio_creation(risk_profile: str, use_garch: bool, model_choice: str
         returns = prices.pct_change().dropna()
         if returns.empty: st.error("Could not calculate returns."); return None
 
-        if model_choice == "Black-Litterman (With Your Views)":
+        if model_choice == "Black-Litterman" and views.get("auto_views"):
+            views = generate_momentum_views(prices)
+
+        if model_choice == "Black-Litterman":
             weights = optimize_black_litterman(returns, risk_profile, views)
         else:
             weights = optimize_mvo(returns, risk_profile, use_garch)
         
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
-            return {"risk_profile": risk_profile, "weights": {k: v for k, v in weights.items() if v > 0}, "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(), "profile_answers": profile_answers, "used_garch": use_garch if model_choice == "Mean-Variance (Standard)" else False, "model_choice": model_choice, "views": views}
+            return {
+                "risk_profile": risk_profile, "weights": {k: v for k, v in weights.items() if v > 0}, "metrics": metrics,
+                "last_rebalanced_date": dt.date.today().isoformat(), "profile_answers": profile_answers,
+                "used_garch": use_garch if model_choice == "Mean-Variance (Standard)" else False,
+                "model_choice": model_choice, "views": views
+            }
     return None
 
 # ======================================================================================
@@ -463,7 +498,6 @@ def main():
     if st.session_state.rebalance_request:
         request = st.session_state.rebalance_request
         profile_answers = all_portfolios[username].get("profile_answers", {})
-        # Pass all necessary arguments from the rebalance request
         new_portfolio = run_portfolio_creation(request["new_profile"], request["use_garch"], request["model_choice"], request["views"], profile_answers)
         if new_portfolio:
             all_portfolios[username] = new_portfolio
