@@ -1,5 +1,5 @@
-# robo_advisor_app_v18_complete.py
-# Final version fixing the VIX display TypeError and ensuring all functions are included.
+# robo_advisor_app_v19_complete.py
+# Final version restoring the HMM chart and placing the feedback form in an expander.
 
 import json
 import datetime as dt
@@ -424,7 +424,14 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         if regime_data is not None:
             current_regime = regime_data['regime_label'].iloc[-1]
             st.info(f"The HMM model indicates the market is currently in a **{current_regime}** state.")
-            # ... (HMM Chart code) ...
+            fig_regime = go.Figure()
+            fig_regime.add_trace(go.Scatter(x=regime_data.index, y=regime_data['Close'], mode='lines', name='SPY Price', line_color='black', showlegend=False))
+            colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
+            for state in colors:
+                fig_regime.add_trace(go.Bar(name=f'{state} Period', x=[None], y=[None], marker_color=colors[state]))
+                for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
+                    fig_regime.add_vrect(x0=g.index.min(), x1=g.index.max(), fillcolor=colors[state], line_width=0, annotation_text=None)
+            st.plotly_chart(fig_regime, use_container_width=True)
         else: st.warning("Market regime analysis is currently unavailable.")
 
     with tabs[4]:
@@ -448,11 +455,14 @@ def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
     answers = {}
     for key, value in QUESTIONNAIRE.items():
         answers[key] = st.radio(f"**{value['question']}**", value['options']); st.caption(f"_{value['help']}_"); st.markdown("---")
+    
     score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
+    
     st.markdown("##### Portfolio Preferences")
     is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
     model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
+    
     views, use_garch = {}, False
     if model_choice == "Black-Litterman":
         view_type = st.radio("How to set investment views?", ["Generate automatically (Recommended)", "Enter my own views manually"], horizontal=True)
@@ -465,18 +475,20 @@ def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
         else: views = {"auto_views": True}
     else:
         use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
+
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, model_choice, views, is_esg, answers
     return "", False, "", {}, False, {}
 
 def display_feedback_form(username: str):
-    st.markdown("---"); st.subheader("Help Us Improve!")
-    with st.form(key="feedback_form"):
-        rating = st.slider("Rate this app:", 1, 5, 4)
-        comment = st.text_area("Comments or suggestions:")
-        if st.form_submit_button("Submit Feedback"):
-            save_feedback({"username": username, "ts": dt.datetime.now().isoformat(), "rating": rating, "comment": comment})
-            st.success("Thank you for your feedback!")
+    st.markdown("---")
+    with st.expander("✍️ Help Us Improve!"):
+        with st.form(key="feedback_form"):
+            rating = st.slider("Rate this app:", 1, 5, 4)
+            comment = st.text_area("Comments or suggestions:")
+            if st.form_submit_button("Submit Feedback"):
+                save_feedback({"username": username, "ts": dt.datetime.now().isoformat(), "rating": rating, "comment": comment})
+                st.success("Thank you for your feedback!")
 
 # ======================================================================================
 # MAIN APP FLOW
@@ -485,16 +497,22 @@ def run_portfolio_creation(risk_profile, use_garch, model_choice, views, is_esg,
     with st.spinner(f"Building your '{risk_profile}' portfolio..."):
         asset_list = ESG_ASSET_UNIVERSE if is_esg else MASTER_ASSET_LIST
         if is_esg: st.info(f"Constructing portfolio from ESG universe: {asset_list}")
+
         prices = get_price_data(asset_list, "2018-01-01")
-        if prices.empty: st.error("Could not download market data for the selected assets."); return None
+        if prices.empty: 
+            st.error("Could not download market data for the selected assets.")
+            return None
+        
         returns = prices.pct_change().dropna()
         if returns.empty: st.error("Could not calculate returns from market data."); return None
+
         if model_choice == "Black-Litterman":
             if views.get("auto_views"):
                 views = generate_momentum_views(prices)
             weights = optimize_black_litterman(returns, risk_profile, views)
         else:
             weights = optimize_mvo(returns, risk_profile, use_garch)
+        
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
             return {"risk_profile": risk_profile, "weights": {k:v for k,v in weights.items() if v>0}, "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(), "profile_answers": profile_answers, "used_garch": use_garch, "model_choice": model_choice, "views": views, "is_esg": is_esg}
