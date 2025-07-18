@@ -396,6 +396,31 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                     fig_regime.add_vrect(x0=g.index.min(), x1=g.index.max(), fillcolor=colors[state], line_width=0, annotation_text=None)
             st.plotly_chart(fig_regime, use_container_width=True)
         else: st.warning("Market regime analysis is currently unavailable due to a data issue.")
+        # <<< NEW FEATURE: Market Sentiment Indicators >>>
+        st.subheader("Market Sentiment Indicators")
+        sentiment_cols = st.columns(2)
+        with sentiment_cols[0]:
+            st.markdown("##### Fear & Greed Index")
+            fng_data = get_fear_greed_index()
+            if fng_data:
+                st.metric(label=fng_data['classification'], value=fng_data['value'])
+                st.progress(fng_data['value'] / 100)
+                st.caption("Measures investor emotion from 0 (Extreme Fear) to 100 (Extreme Greed). Source: alternative.me")
+            else:
+                st.warning("Could not retrieve Fear & Greed data.")
+
+        with sentiment_cols[1]:
+            st.markdown("##### VIX (Volatility Index)")
+            vix_data = get_vix_data()
+            if vix_data is not None and not vix_data.empty:
+                current_vix = vix_data['Close'].iloc[-1]
+                delta_vix = current_vix - vix_data['Close'].iloc[-2]
+                st.metric(label="Current VIX Level", value=f"{current_vix:.2f}", delta=f"{delta_vix:.2f}")
+                st.line_chart(vix_data['Close'], height=120)
+                st.caption("Measures the market's expectation of 30-day volatility. Higher values indicate more fear.")
+            else:
+                st.warning("Could not retrieve VIX data.")
+        st.markdown("---")
 
     with tabs[4]:
         st.header("Your Behavioral Investing Insights")
