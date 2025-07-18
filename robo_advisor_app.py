@@ -281,7 +281,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     tabs = st.tabs(tab_names)
     weights = pd.Series(portfolio["weights"])
 
-    with tabs[0]:
+    with tabs[0]: # Dashboard
         profile_cols = st.columns(5)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
@@ -374,6 +374,29 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         else: st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
     with tabs[3]:
+        # <<< NEW FEATURE: Six-Month Review Trigger >>>
+        st.subheader("💡 Six-Month Review Trigger")
+        last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
+        days_since_last_review = (dt.date.today() - last_rebalanced_date).days
+
+        if days_since_last_review > 180:
+            st.warning(
+                f"**Time for Your Six-Month Review!**\n\n"
+                f"It's been **{days_since_last_review} days** since you last updated your portfolio. Financial advisors recommend reviewing your plan at least every six months or after major life events.\n\n"
+                "**Have any of the following occurred recently?**\n"
+                "- New Job or Change in Income\n"
+                "- Marriage or Change in Family Status\n"
+                "- Birth of a Child\n"
+                "- Purchasing a Home\n\n"
+                "If so, your financial goals may have changed. Consider updating your profile in the 'Settings' section on the **📊 Dashboard** tab."
+            )
+        else:
+            next_review_in = 180 - days_since_last_review
+            st.success(
+                f"✅ **Your financial plan is on track.**\n\n"
+                f"Your last review was {days_since_last_review} days ago. Your next scheduled check-in is in approximately **{next_review_in // 30} months**."
+            )
+        st.markdown("---")
         st.header("Portfolio Intelligence & Market Insights")
         st.subheader("Market Sentiment Indicators")
         sentiment_cols = st.columns(2)
