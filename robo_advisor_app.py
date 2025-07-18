@@ -63,6 +63,32 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
         return prices.ffill().dropna(axis=1, how="all")
     except Exception: return pd.DataFrame()
 
+# <<< NEW FEATURE: Functions to get sentiment data >>>
+@st.cache_data(ttl=dt.timedelta(minutes=30))
+def get_fear_greed_index() -> Dict[str, Any]:
+    """Fetches the Fear & Greed Index from alternative.me API."""
+    try:
+        r = requests.get("https://api.alternative.me/fng/?limit=1")
+        r.raise_for_status()
+        data = r.json()['data'][0]
+        return {
+            "value": int(data['value']),
+            "classification": data['value_classification']
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=dt.timedelta(minutes=30))
+def get_vix_data() -> pd.DataFrame:
+    """Fetches the last 90 days of VIX data."""
+    try:
+        end_date = dt.date.today()
+        start_date = end_date - dt.timedelta(days=90)
+        vix_data = yf.download("^VIX", start=start_date.isoformat(), end=end_date.isoformat(), progress=False, auto_adjust=True)
+        return vix_data
+    except Exception:
+        return None
+
 @st.cache_data(ttl=dt.timedelta(days=7))
 def get_esg_scores(tickers: List[str]) -> Dict[str, int]:
     esg_data = {}
