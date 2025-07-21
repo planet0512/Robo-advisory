@@ -1,4 +1,4 @@
-# robo_advisor_app_v20_complete.py
+# robo_advisor_app_v21_complete.py
 # Final version with SyntaxError fix.
 
 import json
@@ -30,18 +30,15 @@ ESG_ASSET_UNIVERSE = ["ESGV", "DSI", "CRBN", "BND"]
 
 QUESTIONNAIRE = {
     "Financial Goal": {
-        "question": "What is your primary financial goal?",
-        "options": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
+        "question": "What is your primary financial goal?", "options": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
         "help": "This helps determine the overall strategy. Preservation focuses on low-risk assets, while Growth targets higher-return assets."
     },
     "Investment Horizon": {
-        "question": "How long do you plan to invest for?",
-        "options": ["Short-term (< 3 years)", "Medium-term (3-7 years)", "Long-term (> 7 years)"],
+        "question": "How long do you plan to invest for?", "options": ["Short-term (< 3 years)", "Medium-term (3-7 years)", "Long-term (> 7 years)"],
         "help": "A longer horizon means your portfolio has more time to recover from market downturns, allowing for potentially higher-risk, higher-reward investments."
     },
     "Risk Tolerance": {
-        "question": "How would you react if your portfolio suddenly dropped 20%?",
-        "options": ["Sell all to prevent further loss.", "Hold on and wait for it to recover.", "Buy more while prices are low."],
+        "question": "How would you react if your portfolio suddenly dropped 20%?", "options": ["Sell all to prevent further loss.", "Hold on and wait for it to recover.", "Buy more while prices are low."],
         "help": "This question helps gauge your emotional response to risk. Panic-selling during a downturn is one of the biggest risks to long-term success."
     },
 }
@@ -407,8 +404,8 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         st.markdown("---")
         st.subheader("Historical Stress Testing")
         for name, (start, end) in CRASH_SCENARIOS.items():
+            st.markdown(f"#### {name} (`{start}` to `{end}`)")
             # ... Stress test logic ...
-            pass
         st.markdown("---")
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
@@ -442,8 +439,34 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.info("Behavioral analysis is currently unavailable.")
 
 def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
-    # ...
-    pass
+    st.subheader("Complete Your Investor Profile")
+    answers = {}
+    for key, value in QUESTIONNAIRE.items():
+        answers[key] = st.radio(f"**{value['question']}**", value['options']); st.caption(f"_{value['help']}_"); st.markdown("---")
+    
+    score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
+    risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
+    
+    st.markdown("##### Portfolio Preferences")
+    is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
+    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
+    
+    views, use_garch = {}, False
+    if model_choice == "Black-Litterman":
+        view_type = st.radio("How to set investment views?", ["Generate automatically (Recommended)", "Enter my own views manually"], horizontal=True)
+        if "manually" in view_type:
+            with st.container(border=True):
+                st.markdown("###### Express Your Manual Investment Views")
+                views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)",-5.0,5.0,0.0,0.5)
+                views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
+                views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
+        else: views = {"auto_views": True}
+    else:
+        use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
+
+    if st.button("📈 Build My Portfolio", type="primary"):
+        return risk_profile, use_garch, model_choice, views, is_esg, answers
+    return "", False, "", {}, False, {}
 
 def display_feedback_form(username: str):
     st.markdown("---")
@@ -459,12 +482,72 @@ def display_feedback_form(username: str):
 # MAIN APP FLOW
 # ======================================================================================
 def run_portfolio_creation(risk_profile, use_garch, model_choice, views, is_esg, profile_answers):
-    # ...
-    pass
+    with st.spinner(f"Building your '{risk_profile}' portfolio..."):
+        asset_list = ESG_ASSET_UNIVERSE if is_esg else MASTER_ASSET_LIST
+        if is_esg: st.info(f"Constructing portfolio from ESG universe: {asset_list}")
+
+        prices = get_price_data(asset_list, "2018-01-01")
+        if prices.empty: 
+            st.error("Could not download market data for the selected assets.")
+            return None
+        
+        returns = prices.pct_change().dropna()
+        if returns.empty: st.error("Could not calculate returns from market data."); return None
+
+        if model_choice == "Black-Litterman":
+            if views.get("auto_views"):
+                views = generate_momentum_views(prices)
+            weights = optimize_black_litterman(returns, risk_profile, views)
+        else:
+            weights = optimize_mvo(returns, risk_profile, use_garch)
+        
+        if weights is not None:
+            metrics = analyze_portfolio(weights, returns)
+            return {"risk_profile": risk_profile, "weights": {k:v for k,v in weights.items() if v>0}, "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(), "profile_answers": profile_answers, "used_garch": use_garch, "model_choice": model_choice, "views": views, "is_esg": is_esg}
+    return None
 
 def main():
-    # ...
-    pass
+    st.title("WealthGenius 🧠 AI-Powered Investment Advisor")
+    st.markdown("Welcome! This tool uses advanced financial models to build a portfolio tailored to your insights.")
+    st.markdown("---")
+    
+    if "username" not in st.session_state: st.session_state.username = None
+    if "rebalance_request" not in st.session_state: st.session_state.rebalance_request = None
+
+    all_portfolios = load_portfolios()
+
+    if st.session_state.username is None:
+        st.subheader("Create or Load Portfolio")
+        with st.form("login_form"):
+            username_input = st.text_input("Enter your name to begin:")
+            submitted = st.form_submit_button("Begin")
+            if submitted and username_input: st.session_state.username = username_input; st.rerun()
+        st.stop()
+    
+    username = st.session_state.username
+    
+    if st.session_state.rebalance_request:
+        request, portfolio = st.session_state.rebalance_request, all_portfolios[username]
+        new_portfolio = run_portfolio_creation(request["new_profile"], request["use_garch"], request["model_choice"], request["views"], portfolio.get("is_esg", False), portfolio.get("profile_answers", {}))
+        if new_portfolio:
+            save_portfolios(all_portfolios, username, new_portfolio)
+            st.success("Portfolio updated successfully!")
+            st.balloons()
+        st.session_state.rebalance_request = None; st.rerun()
+    elif username not in all_portfolios:
+        risk_profile, use_garch, model_choice, views, is_esg, answers = display_questionnaire()
+        if risk_profile:
+            new_portfolio = run_portfolio_creation(risk_profile, use_garch, model_choice, views, is_esg, answers)
+            if new_portfolio:
+                save_portfolios(all_portfolios, username, new_portfolio)
+                st.success("Your portfolio has been created!")
+                st.balloons()
+                st.rerun()
+    else:
+        display_dashboard(username, all_portfolios[username])
+    
+    if st.session_state.username:
+        display_feedback_form(st.session_state.username)
 
 if __name__ == "__main__":
     main()
