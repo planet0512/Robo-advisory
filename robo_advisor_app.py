@@ -482,7 +482,23 @@ def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
     score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
     
-    st.markdown("##### Portfolio Preferences")
+    st.markdown("##### Portfolidef display_dashboard(username: str, portfolio: Dict[str, Any]):
+    st.subheader(f"Welcome Back, {username.title()}!")
+    tab_names = ["📊 Dashboard", "📈 Future Projection", "🔍 Performance Analysis", "🧠 Portfolio Intelligence", "🧐 Behavioral Insights"]
+    tabs = st.tabs(tab_names)
+    weights = pd.Series(portfolio["weights"])
+
+    with tabs[0]: # Dashboard
+        profile_cols = st.columns(5)
+        profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
+        profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
+        profile_cols[2].metric("Optimization Model", portfolio.get('model_choice', 'Mean-Variance (Standard)'))
+        profile_cols[3].metric("🧠 ML Volatility", "Active (GARCH)" if portfolio.get('used_garch', False) else "Inactive")
+        profile_cols[4].metric("🌿 ESG Focus", "Active" if portfolio.get('is_esg', False) else "Inactive")
+        st.markdown("---")
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("Expected Return", f"{portfolio['metrics']['expected_return']:.2%}")
+        metric_cols[1].metric("o Preferences")
     is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
     model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
     
