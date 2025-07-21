@@ -412,8 +412,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             timer_cols[0].metric("Last Reviewed", f"{days_since_last_review} days ago")
             timer_cols[1].metric("Next Scheduled Review In", f"{days_remaining} days")
 
-        st.markdown("---")
-        st.markdown("---")
+            st.markdown("---")
         st.subheader("Market Sentiment Indicators")
         sentiment_cols = st.columns(2)
         with sentiment_cols[0]:
@@ -433,10 +432,57 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             else: st.warning("Could not retrieve VIX data.")
         st.markdown("---")
         st.subheader("Historical Stress Testing")
+        
+        # <<< FIX: Rewritten loop to always display metric boxes >>>
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
-            # ... Stress test logic ...
-        st.markdown("---")
+
+            # Initialize results as "N/A"
+            portfolio_return_str, portfolio_drawdown_str = "N/A", "N/A"
+            spy_return_str, spy_drawdown_str = "N/A", "N/A"
+            warning_message = ""
+
+            all_assets_for_period = list(weights.index) + ["SPY"]
+            crisis_prices = get_price_data(all_assets_for_period, start, end)
+
+            if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
+                warning_message = f"Could not retrieve valid market data for the S&P 500 benchmark during this period."
+            else:
+                available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
+                
+                # Calculate S&P 500 performance
+                spy_returns = crisis_prices['SPY'].pct_change()
+                spy_cumulative = (1 + spy_returns).cumprod()
+                spy_return = spy_cumulative.iloc[-1] - 1
+                spy_drawdown = calculate_drawdown(spy_cumulative).min()
+                spy_return_str = f"{spy_return:.2%}"
+                spy_drawdown_str = f"{spy_drawdown:.2%}"
+
+                if not available_portfolio_assets:
+                    warning_message = f"None of your portfolio's assets existed during this period."
+                else:
+                    # Calculate portfolio performance
+                    aligned_weights = weights[available_portfolio_assets].copy()
+                    aligned_weights /= aligned_weights.sum()
+                    portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
+                    portfolio_cumulative = (1 + portfolio_returns).cumprod()
+                    portfolio_return = portfolio_cumulative.iloc[-1] - 1
+                    portfolio_drawdown = calculate_drawdown(portfolio_cumulative).min()
+                    portfolio_return_str = f"{portfolio_return:.2%}"
+                    portfolio_drawdown_str = f"{portfolio_drawdown:.2%}"
+
+            if warning_message:
+                st.info(warning_message)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Your Portfolio Total Return", portfolio_return_str)
+                st.metric("Your Portfolio Max Drawdown", portfolio_drawdown_str)
+            with col2:
+                st.metric("S&P 500 Total Return", spy_return_str)
+                st.metric("S&P 500 Max Drawdown", spy_drawdown_str)
+            st.markdown("---")
+
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
         if regime_data is not None:
