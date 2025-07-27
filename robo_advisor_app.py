@@ -25,7 +25,7 @@ st.set_page_config(page_title="WealthGenius | AI Advisor", page_icon="🧠", lay
 PORTFOLIO_FILE = Path("user_portfolios.json")
 FEEDBACK_FILE = Path("feedback.json")
 RISK_AVERSION_FACTORS = {"Conservative": 4.0, "Balanced": 2.5, "Aggressive": 1.0}
-MASTER_ASSET_LIST = ["VTI", "VXUS", "BND", "QUAL", "AVUV", "MTUM", "USMV", "ESGV", "DSI", "CRBN"]
+MASTER_ASSET_LIST = ["VTI", "VXUS", "BND", "QUAL", "AVUV", "MTUM", "USMV", "ESGV", "DSI", "CRBN"] 
 ESG_ASSET_UNIVERSE = ["ESGV", "DSI", "CRBN", "BND"]
 
 QUESTIONNAIRE = {
@@ -60,14 +60,12 @@ def get_price_data(tickers: List[str], start_date: str, end_date: str = None) ->
         if not tickers: return pd.DataFrame()
         data = yf.download(tickers, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if data.empty: return pd.DataFrame()
-        if isinstance(data.columns, pd.MultiIndex):
-            prices = data['Close']
+        if isinstance(data.columns, pd.MultiIndex): prices = data['Close']
         else:
             prices = data[['Close']]
             if len(tickers) == 1: prices = prices.rename(columns={'Close': tickers[0]})
         return prices.ffill().dropna(axis=1, how="all")
-    except Exception:
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=dt.timedelta(minutes=30))
 def get_fear_greed_index() -> Dict[str, Any]:
@@ -94,8 +92,7 @@ def get_esg_scores(tickers: List[str]) -> Dict[str, int]:
             info = yf.Ticker(ticker).info
             if 'totalEsg' in info and info['totalEsg'] is not None: esg_data[ticker] = info['totalEsg']
             else: esg_data[ticker] = -1
-        except Exception:
-            esg_data[ticker] = -1
+        except Exception: esg_data[ticker] = -1
     return esg_data
 
 @st.cache_data(ttl=dt.timedelta(days=1))
@@ -123,10 +120,8 @@ def save_portfolios(portfolios: Dict[str, Any], username: str, new_portfolio_dat
     user_data["history"].append(history_snapshot)
     user_data["history"] = user_data["history"][-10:]
     portfolios[username] = user_data
-    try:
-        PORTFOLIO_FILE.write_text(json.dumps(portfolios, indent=2))
-    except Exception as e:
-        st.error(f"Failed to save portfolios: {e}")
+    try: PORTFOLIO_FILE.write_text(json.dumps(portfolios, indent=2))
+    except Exception as e: st.error(f"Failed to save portfolios: {e}")
 
 def save_feedback(feedback_data: Dict):
     all_feedback = []
@@ -350,19 +345,19 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.write("⚙️ **Testing Tools**")
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Dummy: Set review to 179 days ago"):
+                if st.button("Test 'On Track' State (Set review to 1 day ago)"):
                     all_portfolios = load_portfolios()
                     if username in all_portfolios:
-                        past_date = (dt.date.today() - dt.timedelta(days=179)).isoformat()
+                        past_date = (dt.date.today() - dt.timedelta(days=1)).isoformat()
                         all_portfolios[username]['last_rebalanced_date'] = past_date
                         save_portfolios(all_portfolios, username, all_portfolios[username])
                         st.success("Portfolio's last review date set. Refreshing...")
                         st.rerun()
             with col2:
-                if st.button("Dummy: Set review to 180 days ago"):
+                if st.button("Test 'Review Due' Pop-up (Set review to 181 days ago)"):
                     all_portfolios = load_portfolios()
                     if username in all_portfolios:
-                        past_date = (dt.date.today() - dt.timedelta(days=180)).isoformat()
+                        past_date = (dt.date.today() - dt.timedelta(days=181)).isoformat()
                         all_portfolios[username]['last_rebalanced_date'] = past_date
                         save_portfolios(all_portfolios, username, all_portfolios[username])
                         st.success("Portfolio's last review date set. Refreshing...")
@@ -422,16 +417,14 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
     
     with tabs[3]:
         st.header("Portfolio Intelligence & Market Insights")
-        st.subheader("💡 Six-Month Review Trigger")
-        last_rebalanced_date_for_tab = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
-        days_since_for_tab = (dt.date.today() - last_rebalanced_date_for_tab).days
-        if days_since_for_tab > 180:
+        st.subheader("💡 Six-Month Review Status")
+        if days_since_last_review > 180:
             st.info(f"A review is due. Please see the banner at the top of the page for details.")
         else:
-            days_remaining = 180 - days_since_for_tab
+            days_remaining = 180 - days_since_last_review
             st.success(f"✅ Your financial plan is on track.")
             timer_cols = st.columns(2)
-            timer_cols[0].metric("Last Reviewed", f"{days_since_for_tab} days ago")
+            timer_cols[0].metric("Last Reviewed", f"{days_since_last_review} days ago")
             timer_cols[1].metric("Next Scheduled Review In", f"{days_remaining} days")
         st.markdown("---")
         st.subheader("Market Sentiment Indicators")
@@ -455,8 +448,28 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         st.subheader("Historical Stress Testing")
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
-            # ... Stress test logic ...
-        st.markdown("---")
+            all_assets_for_period = list(weights.index) + ["SPY"]
+            crisis_prices = get_price_data(all_assets_for_period, start, end)
+            if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
+                st.warning(f"Could not retrieve valid market data for the {name} period."); st.markdown("---"); continue
+            available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
+            portfolio_return_str, portfolio_drawdown_str, spy_return_str, spy_drawdown_str = "N/A", "N/A", "N/A", "N/A"
+            spy_returns = crisis_prices['SPY'].pct_change(); spy_cumulative = (1 + spy_returns).cumprod()
+            spy_return_str = f"{spy_cumulative.iloc[-1] - 1:.2%}"; spy_drawdown_str = f"{calculate_drawdown(spy_cumulative).min():.2%}"
+            if not available_portfolio_assets:
+                st.info(f"None of your portfolio's assets existed during this period.")
+            else:
+                aligned_weights = weights[available_portfolio_assets].copy(); aligned_weights /= aligned_weights.sum()
+                portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
+                portfolio_cumulative = (1 + portfolio_returns).cumprod()
+                portfolio_return_str = f"{portfolio_cumulative.iloc[-1] - 1:.2%}"
+                portfolio_drawdown_str = f"{calculate_drawdown(portfolio_cumulative).min():.2%}"
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Your Portfolio Total Return", portfolio_return_str); st.metric("Your Portfolio Max Drawdown", portfolio_drawdown_str)
+            with col2:
+                st.metric("S&P 500 Total Return", spy_return_str); st.metric("S&P 500 Max Drawdown", spy_drawdown_str)
+            st.markdown("---")
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
         if regime_data is not None:
@@ -464,7 +477,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             st.info(f"The HMM model indicates the market is currently in a **{current_regime}** state.")
             fig_regime = go.Figure()
             fig_regime.add_trace(go.Scatter(x=regime_data.index, y=regime_data['Close'], mode='lines', name='SPY Price', line_color='black', showlegend=False))
-            colors = {'Low Volatility': 'rgba(0, 176, 246, 0.2)', 'High Volatility': 'rgba(255, 82, 82, 0.2)'}
+            colors = {'High Volatility': 'rgba(255, 82, 82, 0.2)', 'Low Volatility': 'rgba(0, 176, 246, 0.2)'}
             for state in colors:
                 fig_regime.add_trace(go.Bar(name=f'{state} Period', x=[None], y=[None], marker_color=colors[state]))
                 for _, g in regime_data[regime_data['regime_label'] == state].groupby((regime_data['regime_label'] != regime_data['regime_label'].shift()).cumsum()):
@@ -481,10 +494,10 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.success("✅ No common behavioral biases detected in your recent activity. Great job staying disciplined!")
             if "Excessive Trading" in detected_biases:
                 st.warning("Potential Bias Detected: Overconfidence / Excessive Trading")
-                st.info("...")
+                st.info("Observation: You have rebalanced your portfolio multiple times in a short period...")
             if "Myopic Loss Aversion" in detected_biases:
                 st.warning("Potential Bias Detected: Myopic Loss Aversion")
-                st.info("...")
+                st.info("Observation: You significantly lowered your risk profile during a recent period of high market volatility...")
         else:
             st.info("Behavioral analysis is currently unavailable.")
 
@@ -497,19 +510,21 @@ def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
     st.markdown("##### Portfolio Preferences")
     is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
-    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
+    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"], help="Mean-Variance: Classic risk-return balance. Black-Litterman: Blends market data with your views.")
     views, use_garch = {}, False
     if model_choice == "Black-Litterman":
         view_type = st.radio("How to set investment views?", ["Generate automatically (Recommended)", "Enter my own views manually"], horizontal=True)
         if "manually" in view_type:
+            st.info("For advanced users who want to express specific beliefs about the market.")
             with st.container(border=True):
-                st.markdown("###### Express Your Manual Investment Views")
                 views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)",-5.0,5.0,0.0,0.5)
                 views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
                 views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
-        else: views = {"auto_views": True}
+        else: st.info("The app will analyze 12-month momentum to generate data-driven views automatically.")
+        views['auto_views'] = "automatically" in view_type
     else:
         use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
+        st.caption("OFF: Uses long-term historical volatility. ON: Uses a GARCH model that reacts more quickly to recent market turbulence.")
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, model_choice, views, is_esg, answers
     return "", False, "", {}, False, {}
@@ -532,9 +547,7 @@ def run_portfolio_creation(risk_profile, use_garch, model_choice, views, is_esg,
         asset_list = ESG_ASSET_UNIVERSE if is_esg else MASTER_ASSET_LIST
         if is_esg: st.info(f"Constructing portfolio from ESG universe: {asset_list}")
         prices = get_price_data(asset_list, "2018-01-01")
-        if prices.empty: 
-            st.error("Could not download market data for the selected assets.")
-            return None
+        if prices.empty: st.error("Could not download market data for the selected assets."); return None
         returns = prices.pct_change().dropna()
         if returns.empty: st.error("Could not calculate returns from market data."); return None
         if model_choice == "Black-Litterman":
