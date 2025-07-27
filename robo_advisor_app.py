@@ -392,7 +392,7 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.plotly_chart(fig_frontier, use_container_width=True)
         else: st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
-        with tabs[3]: # Portfolio Intelligence
+    with tabs[3]: # Portfolio Intelligence
         st.header("Portfolio Intelligence & Market Insights")
         
         st.subheader("💡 Six-Month Review Trigger")
@@ -423,8 +423,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             timer_cols = st.columns(2)
             timer_cols[0].metric("Last Reviewed", f"{days_since_last_review} days ago")
             timer_cols[1].metric("Next Scheduled Review In", f"{days_remaining} days")
-            
-            st.markdown("---")
         st.subheader("Market Sentiment Indicators")
         sentiment_cols = st.columns(2)
         with sentiment_cols[0]:
