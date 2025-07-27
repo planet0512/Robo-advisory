@@ -288,14 +288,20 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
         profile_cols[2].metric("Optimization Model", portfolio.get('model_choice', 'Mean-Variance (Standard)'))
         profile_cols[3].metric("🧠 ML Volatility", "Active (GARCH)" if portfolio.get('used_garch', False) else "Inactive")
         profile_cols[4].metric("🌿 ESG Focus", "Active" if portfolio.get('is_esg', False) else "Inactive")
+        
         st.markdown("---")
+        
+        # This shows your "financial status as of now" using key metrics
         metric_cols = st.columns(5)
         metric_cols[0].metric("Expected Return", f"{portfolio['metrics']['expected_return']:.2%}")
         metric_cols[1].metric("Volatility", f"{portfolio['metrics']['expected_volatility']:.2%}")
         metric_cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
         metric_cols[3].metric("Daily VaR (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
         metric_cols[4].metric("Daily CVaR (95%)", f"{portfolio['metrics']['conditional_value_at_risk_95']:.2%}")
+        
         st.markdown("---")
+
+        # This shows "what are the things I invested in and my portfolio"
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, textinfo="label+percent"))
         st.plotly_chart(fig_pie, use_container_width=True)
         
@@ -386,14 +392,20 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.plotly_chart(fig_frontier, use_container_width=True)
         else: st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
-    with tabs[3]:
+        with tabs[3]: # Portfolio Intelligence
         st.header("Portfolio Intelligence & Market Insights")
-         # <<< NEW FEATURE: Six-Month Review Timer >>>
+        
         st.subheader("💡 Six-Month Review Trigger")
+        
+        # Get the date the portfolio was last updated
         last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
+        
+        # This is where it calculates "how many days have passed"
         days_since_last_review = (dt.date.today() - last_rebalanced_date).days
 
+        # This is the logic that decides whether to show the prompt or the countdown
         if days_since_last_review > 180:
+            # If it's more than 180 days, it displays the prompt
             st.warning(
                 f"**Time for Your Six-Month Review!**\n\n"
                 f"It's been **{days_since_last_review} days** since you last updated your portfolio. Financial advisors recommend reviewing your plan at least every six months or after major life events.\n\n"
@@ -405,13 +417,13 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 "If so, your financial goals may have changed. Consider updating your profile in the 'Settings' section on the **📊 Dashboard** tab."
             )
         else:
+            # If it's less than 180 days, it shows the "on track" message
             days_remaining = 180 - days_since_last_review
             st.success(f"✅ **Your financial plan is on track.**")
-            
             timer_cols = st.columns(2)
             timer_cols[0].metric("Last Reviewed", f"{days_since_last_review} days ago")
             timer_cols[1].metric("Next Scheduled Review In", f"{days_remaining} days")
-
+            
             st.markdown("---")
         st.subheader("Market Sentiment Indicators")
         sentiment_cols = st.columns(2)
