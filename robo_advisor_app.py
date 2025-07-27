@@ -1,5 +1,5 @@
-# robo_advisor_app_v21_complete.py
-# Final version with SyntaxError fix.
+# robo_advisor_app_final.py
+# Final, complete version with all features, including the pop-out six-month review trigger.
 
 import json
 import datetime as dt
@@ -30,15 +30,18 @@ ESG_ASSET_UNIVERSE = ["ESGV", "DSI", "CRBN", "BND"]
 
 QUESTIONNAIRE = {
     "Financial Goal": {
-        "question": "What is your primary financial goal?", "options": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
+        "question": "What is your primary financial goal?",
+        "options": ["Capital Preservation", "Generate Income", "Long-Term Growth"],
         "help": "This helps determine the overall strategy. Preservation focuses on low-risk assets, while Growth targets higher-return assets."
     },
     "Investment Horizon": {
-        "question": "How long do you plan to invest for?", "options": ["Short-term (< 3 years)", "Medium-term (3-7 years)", "Long-term (> 7 years)"],
+        "question": "How long do you plan to invest for?",
+        "options": ["Short-term (< 3 years)", "Medium-term (3-7 years)", "Long-term (> 7 years)"],
         "help": "A longer horizon means your portfolio has more time to recover from market downturns, allowing for potentially higher-risk, higher-reward investments."
     },
     "Risk Tolerance": {
-        "question": "How would you react if your portfolio suddenly dropped 20%?", "options": ["Sell all to prevent further loss.", "Hold on and wait for it to recover.", "Buy more while prices are low."],
+        "question": "How would you react if your portfolio suddenly dropped 20%?",
+        "options": ["Sell all to prevent further loss.", "Hold on and wait for it to recover.", "Buy more while prices are low."],
         "help": "This question helps gauge your emotional response to risk. Panic-selling during a downturn is one of the biggest risks to long-term success."
     },
 }
@@ -277,34 +280,44 @@ def calculate_drawdown(performance_series):
 # ======================================================================================
 def display_dashboard(username: str, portfolio: Dict[str, Any]):
     st.subheader(f"Welcome Back, {username.title()}!")
+    
+    if 'review_toast_shown' not in st.session_state:
+        st.session_state.review_toast_shown = False
+    last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
+    days_since_last_review = (dt.date.today() - last_rebalanced_date).days
+
+    if days_since_last_review > 180:
+        st.warning(
+            f"💡 **Time for Your Six-Month Review!** It's been **{days_since_last_review} days** since you last updated your plan. "
+            "Consider if any major life events have occurred and update your profile in the 'Settings' on the Dashboard tab."
+        )
+        if not st.session_state.review_toast_shown:
+            st.toast('💡 Time for your 6-month portfolio review!', icon='💡')
+            st.session_state.review_toast_shown = True
+    elif st.session_state.review_toast_shown:
+         st.session_state.review_toast_shown = False
+
     tab_names = ["📊 Dashboard", "📈 Future Projection", "🔍 Performance Analysis", "🧠 Portfolio Intelligence", "🧐 Behavioral Insights"]
     tabs = st.tabs(tab_names)
     weights = pd.Series(portfolio["weights"])
 
-    with tabs[0]: # Dashboard
+    with tabs[0]:
         profile_cols = st.columns(5)
         profile_cols[0].metric("Risk Profile", portfolio['risk_profile'])
         profile_cols[1].metric("Financial Goal", portfolio.get('profile_answers', {}).get('Financial Goal', 'N/A'))
         profile_cols[2].metric("Optimization Model", portfolio.get('model_choice', 'Mean-Variance (Standard)'))
         profile_cols[3].metric("🧠 ML Volatility", "Active (GARCH)" if portfolio.get('used_garch', False) else "Inactive")
         profile_cols[4].metric("🌿 ESG Focus", "Active" if portfolio.get('is_esg', False) else "Inactive")
-        
         st.markdown("---")
-        
-        # This shows your "financial status as of now" using key metrics
         metric_cols = st.columns(5)
         metric_cols[0].metric("Expected Return", f"{portfolio['metrics']['expected_return']:.2%}")
         metric_cols[1].metric("Volatility", f"{portfolio['metrics']['expected_volatility']:.2%}")
         metric_cols[2].metric("Sharpe Ratio", f"{portfolio['metrics']['sharpe_ratio']:.2f}")
         metric_cols[3].metric("Daily VaR (95%)", f"{portfolio['metrics']['value_at_risk_95']:.2%}")
         metric_cols[4].metric("Daily CVaR (95%)", f"{portfolio['metrics']['conditional_value_at_risk_95']:.2%}")
-        
         st.markdown("---")
-
-        # This shows "what are the things I invested in and my portfolio"
         fig_pie = go.Figure(go.Pie(labels=weights.index, values=weights.values, hole=0.4, textinfo="label+percent"))
         st.plotly_chart(fig_pie, use_container_width=True)
-        
         with st.expander("⚙️ Settings, Rebalancing & Profile Change"):
             st.write("Update your portfolio settings and rebalance to the latest market data.")
             current_profile_index = list(RISK_AVERSION_FACTORS.keys()).index(portfolio['risk_profile'])
@@ -327,18 +340,27 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             if st.button("Update and Rebalance Portfolio", type="primary"):
                 st.session_state.rebalance_request = {"new_profile": new_profile, "use_garch": use_garch_rebalance, "model_choice": model_choice_rebal, "views": views_rebal}
                 st.rerun()
-
             st.markdown("---")
             st.write("⚙️ **Testing Tools**")
-            if st.button("Dummy: Set last review to ~6 months ago"):
-                all_portfolios = load_portfolios()
-                if username in all_portfolios:
-                    past_date = (dt.date.today() - dt.timedelta(days=179)).isoformat()
-                    all_portfolios[username]['last_rebalanced_date'] = past_date
-                    # We have to use the full save function signature now
-                    save_portfolios(all_portfolios, username, all_portfolios[username])
-                    st.success("Portfolio's last review date set to 179 days ago. Refreshing...")
-                    st.rerun()
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Dummy: Set review to 179 days ago"):
+                    all_portfolios = load_portfolios()
+                    if username in all_portfolios:
+                        past_date = (dt.date.today() - dt.timedelta(days=179)).isoformat()
+                        all_portfolios[username]['last_rebalanced_date'] = past_date
+                        save_portfolios(all_portfolios, username, all_portfolios[username])
+                        st.success("Portfolio's last review date set. Refreshing...")
+                        st.rerun()
+            with col2:
+                if st.button("Dummy: Set review to 180 days ago"):
+                    all_portfolios = load_portfolios()
+                    if username in all_portfolios:
+                        past_date = (dt.date.today() - dt.timedelta(days=180)).isoformat()
+                        all_portfolios[username]['last_rebalanced_date'] = past_date
+                        save_portfolios(all_portfolios, username, all_portfolios[username])
+                        st.success("Portfolio's last review date set. Refreshing...")
+                        st.rerun()
 
     with tabs[1]:
         st.header("Future Growth Simulation (Monte Carlo)")
@@ -392,37 +414,8 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.plotly_chart(fig_frontier, use_container_width=True)
         else: st.warning("Could not retrieve sufficient historical data for the Performance Analysis tab.")
     
-    with tabs[3]: # Portfolio Intelligence
+    with tabs[3]:
         st.header("Portfolio Intelligence & Market Insights")
-        
-        st.subheader("💡 Six-Month Review Trigger")
-        
-        # Get the date the portfolio was last updated
-        last_rebalanced_date = dt.date.fromisoformat(portfolio.get("last_rebalanced_date", "2000-01-01"))
-        
-        # This is where it calculates "how many days have passed"
-        days_since_last_review = (dt.date.today() - last_rebalanced_date).days
-
-        # This is the logic that decides whether to show the prompt or the countdown
-        if days_since_last_review > 180:
-            # If it's more than 180 days, it displays the prompt
-            st.warning(
-                f"**Time for Your Six-Month Review!**\n\n"
-                f"It's been **{days_since_last_review} days** since you last updated your portfolio. Financial advisors recommend reviewing your plan at least every six months or after major life events.\n\n"
-                "**Have any of the following occurred recently?**\n"
-                "- New Job or Change in Income\n"
-                "- Marriage or Change in Family Status\n"
-                "- Birth of a Child\n"
-                "- Purchasing a Home\n\n"
-                "If so, your financial goals may have changed. Consider updating your profile in the 'Settings' section on the **📊 Dashboard** tab."
-            )
-        else:
-            # If it's less than 180 days, it shows the "on track" message
-            days_remaining = 180 - days_since_last_review
-            st.success(f"✅ **Your financial plan is on track.**")
-            timer_cols = st.columns(2)
-            timer_cols[0].metric("Last Reviewed", f"{days_since_last_review} days ago")
-            timer_cols[1].metric("Next Scheduled Review In", f"{days_remaining} days")
         st.subheader("Market Sentiment Indicators")
         sentiment_cols = st.columns(2)
         with sentiment_cols[0]:
@@ -442,48 +435,28 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
             else: st.warning("Could not retrieve VIX data.")
         st.markdown("---")
         st.subheader("Historical Stress Testing")
-        
-        # <<< FIX: Rewritten loop to always display metric boxes >>>
         for name, (start, end) in CRASH_SCENARIOS.items():
             st.markdown(f"#### {name} (`{start}` to `{end}`)")
-
-            # Initialize results as "N/A"
-            portfolio_return_str, portfolio_drawdown_str = "N/A", "N/A"
-            spy_return_str, spy_drawdown_str = "N/A", "N/A"
-            warning_message = ""
-
             all_assets_for_period = list(weights.index) + ["SPY"]
             crisis_prices = get_price_data(all_assets_for_period, start, end)
-
             if crisis_prices.empty or "SPY" not in crisis_prices.columns or crisis_prices['SPY'].isnull().all():
-                warning_message = f"Could not retrieve valid market data for the S&P 500 benchmark during this period."
+                st.warning(f"Could not retrieve valid market data for the {name} period."); st.markdown("---"); continue
+            available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
+            portfolio_return_str, portfolio_drawdown_str = "N/A", "N/A"
+            spy_return_str, spy_drawdown_str = "N/A", "N/A"
+            if not available_portfolio_assets:
+                st.info(f"None of your portfolio's assets existed during this period.")
             else:
-                available_portfolio_assets = [t for t in weights.index if t in crisis_prices.columns and not crisis_prices[t].isnull().all()]
-                
-                # Calculate S&P 500 performance
-                spy_returns = crisis_prices['SPY'].pct_change()
-                spy_cumulative = (1 + spy_returns).cumprod()
-                spy_return = spy_cumulative.iloc[-1] - 1
-                spy_drawdown = calculate_drawdown(spy_cumulative).min()
-                spy_return_str = f"{spy_return:.2%}"
-                spy_drawdown_str = f"{spy_drawdown:.2%}"
+                aligned_weights = weights[available_portfolio_assets].copy(); aligned_weights /= aligned_weights.sum()
+                portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
+                portfolio_cumulative = (1 + portfolio_returns).cumprod()
+                portfolio_return_str = f"{portfolio_cumulative.iloc[-1] - 1:.2%}"
+                portfolio_drawdown_str = f"{calculate_drawdown(portfolio_cumulative).min():.2%}"
 
-                if not available_portfolio_assets:
-                    warning_message = f"None of your portfolio's assets existed during this period."
-                else:
-                    # Calculate portfolio performance
-                    aligned_weights = weights[available_portfolio_assets].copy()
-                    aligned_weights /= aligned_weights.sum()
-                    portfolio_returns = crisis_prices[available_portfolio_assets].pct_change().dot(aligned_weights)
-                    portfolio_cumulative = (1 + portfolio_returns).cumprod()
-                    portfolio_return = portfolio_cumulative.iloc[-1] - 1
-                    portfolio_drawdown = calculate_drawdown(portfolio_cumulative).min()
-                    portfolio_return_str = f"{portfolio_return:.2%}"
-                    portfolio_drawdown_str = f"{portfolio_drawdown:.2%}"
-
-            if warning_message:
-                st.info(warning_message)
-
+            spy_returns = crisis_prices['SPY'].pct_change()
+            spy_cumulative = (1 + spy_returns).cumprod()
+            spy_return_str = f"{spy_cumulative.iloc[-1] - 1:.2%}"
+            spy_drawdown_str = f"{calculate_drawdown(spy_cumulative).min():.2%}"
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Your Portfolio Total Return", portfolio_return_str)
@@ -492,7 +465,6 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.metric("S&P 500 Total Return", spy_return_str)
                 st.metric("S&P 500 Max Drawdown", spy_drawdown_str)
             st.markdown("---")
-
         st.subheader("Machine Learning: Market Regime Detection")
         regime_data = detect_market_regimes()
         if regime_data is not None:
@@ -517,69 +489,39 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
                 st.success("✅ No common behavioral biases detected in your recent activity. Great job staying disciplined!")
             if "Excessive Trading" in detected_biases:
                 st.warning("Potential Bias Detected: Overconfidence / Excessive Trading")
-                st.info("...")
+                st.info("Observation: You have rebalanced your portfolio multiple times in a short period...")
             if "Myopic Loss Aversion" in detected_biases:
                 st.warning("Potential Bias Detected: Myopic Loss Aversion")
-                st.info("...")
+                st.info("Observation: You significantly lowered your risk profile during a recent period of high market volatility...")
         else:
             st.info("Behavioral analysis is currently unavailable.")
 
 def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
     st.subheader("Complete Your Investor Profile")
-    st.write("Your answers to these questions will help us tailor a portfolio that matches your financial situation and comfort with risk.")
     answers = {}
     for key, value in QUESTIONNAIRE.items():
-        answers[key] = st.radio(f"**{value['question']}**", value['options'])
-        st.caption(f"_{value['help']}_")
-        st.markdown("---")
-    
+        answers[key] = st.radio(f"**{value['question']}**", value['options']); st.caption(f"_{value['help']}_"); st.markdown("---")
     score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
-    
     st.markdown("##### Portfolio Preferences")
     is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
-    
-    # <<< MODIFIED: Added detailed help text for clarity >>>
-    model_choice = st.selectbox(
-        "Choose optimization model:", 
-        ["Mean-Variance (Standard)", "Black-Litterman"],
-        help=(
-            "Mean-Variance (Standard): The classic approach. It uses historical performance to find the best balance of risk and return.\n\n"
-            "Black-Litterman: An advanced model that starts with a neutral market portfolio and then tilts it based on specific views. Good for incorporating forward-looking opinions."
-        )
-    )
-    
+    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
     views, use_garch = {}, False
     if model_choice == "Black-Litterman":
-        view_type = st.radio(
-            "How to set investment views?", 
-            ["Generate automatically (Recommended)", "Enter my own views manually"], 
-            horizontal=True
-        )
-        # <<< MODIFIED: Added explanatory text for view types >>>
+        view_type = st.radio("How to set investment views?", ["Generate automatically (Recommended)", "Enter my own views manually"], horizontal=True)
         if "manually" in view_type:
-            st.info("This option is for advanced users who have their own research and want to express specific beliefs about the market.")
             with st.container(border=True):
                 st.markdown("###### Express Your Manual Investment Views")
                 views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)",-5.0,5.0,0.0,0.5)
                 views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
                 views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
-        else: # Automatic
-            st.info("The app will analyze recent market performance (12-month momentum) to generate data-driven views automatically.")
-            views = {"auto_views": True}
-    else: # Mean-Variance
+        else: views = {"auto_views": True}
+    else:
         use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
-        # <<< MODIFIED: Added detailed caption for GARCH >>>
-        st.caption(
-            "When OFF, risk is measured using long-term historical volatility. "
-            "When ON, the app uses a machine learning model (GARCH) that reacts more quickly to recent market turbulence, potentially offering better risk management."
-        )
-
-    st.markdown("---")
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, model_choice, views, is_esg, answers
     return "", False, "", {}, False, {}
-    
+
 def display_feedback_form(username: str):
     st.markdown("---")
     with st.expander("✍️ Help Us Improve!"):
@@ -597,22 +539,18 @@ def run_portfolio_creation(risk_profile, use_garch, model_choice, views, is_esg,
     with st.spinner(f"Building your '{risk_profile}' portfolio..."):
         asset_list = ESG_ASSET_UNIVERSE if is_esg else MASTER_ASSET_LIST
         if is_esg: st.info(f"Constructing portfolio from ESG universe: {asset_list}")
-
         prices = get_price_data(asset_list, "2018-01-01")
         if prices.empty: 
             st.error("Could not download market data for the selected assets.")
             return None
-        
         returns = prices.pct_change().dropna()
         if returns.empty: st.error("Could not calculate returns from market data."); return None
-
         if model_choice == "Black-Litterman":
             if views.get("auto_views"):
                 views = generate_momentum_views(prices)
             weights = optimize_black_litterman(returns, risk_profile, views)
         else:
             weights = optimize_mvo(returns, risk_profile, use_garch)
-        
         if weights is not None:
             metrics = analyze_portfolio(weights, returns)
             return {"risk_profile": risk_profile, "weights": {k:v for k,v in weights.items() if v>0}, "metrics": metrics, "last_rebalanced_date": dt.date.today().isoformat(), "profile_answers": profile_answers, "used_garch": use_garch, "model_choice": model_choice, "views": views, "is_esg": is_esg}
@@ -625,6 +563,7 @@ def main():
     
     if "username" not in st.session_state: st.session_state.username = None
     if "rebalance_request" not in st.session_state: st.session_state.rebalance_request = None
+    if "review_toast_shown" not in st.session_state: st.session_state.review_toast_shown = False
 
     all_portfolios = load_portfolios()
 
