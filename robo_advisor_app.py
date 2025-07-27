@@ -516,34 +516,60 @@ def display_dashboard(username: str, portfolio: Dict[str, Any]):
 
 def display_questionnaire() -> Tuple[str, bool, str, dict, bool, Dict]:
     st.subheader("Complete Your Investor Profile")
+    st.write("Your answers to these questions will help us tailor a portfolio that matches your financial situation and comfort with risk.")
     answers = {}
     for key, value in QUESTIONNAIRE.items():
-        answers[key] = st.radio(f"**{value['question']}**", value['options']); st.caption(f"_{value['help']}_"); st.markdown("---")
+        answers[key] = st.radio(f"**{value['question']}**", value['options'])
+        st.caption(f"_{value['help']}_")
+        st.markdown("---")
     
     score = sum(QUESTIONNAIRE[key]['options'].index(answers[key]) for key in ["Risk Tolerance", "Investment Horizon"])
     risk_profile = "Conservative" if score <= 1 else "Balanced" if score <= 3 else "Aggressive"
     
     st.markdown("##### Portfolio Preferences")
     is_esg = st.toggle("🌿 Build an ESG-focused portfolio?", help="Filters for investments with high Environmental, Social, and Governance ratings.")
-    model_choice = st.selectbox("Choose optimization model:", ["Mean-Variance (Standard)", "Black-Litterman"])
+    
+    # <<< MODIFIED: Added detailed help text for clarity >>>
+    model_choice = st.selectbox(
+        "Choose optimization model:", 
+        ["Mean-Variance (Standard)", "Black-Litterman"],
+        help=(
+            "Mean-Variance (Standard): The classic approach. It uses historical performance to find the best balance of risk and return.\n\n"
+            "Black-Litterman: An advanced model that starts with a neutral market portfolio and then tilts it based on specific views. Good for incorporating forward-looking opinions."
+        )
+    )
     
     views, use_garch = {}, False
     if model_choice == "Black-Litterman":
-        view_type = st.radio("How to set investment views?", ["Generate automatically (Recommended)", "Enter my own views manually"], horizontal=True)
+        view_type = st.radio(
+            "How to set investment views?", 
+            ["Generate automatically (Recommended)", "Enter my own views manually"], 
+            horizontal=True
+        )
+        # <<< MODIFIED: Added explanatory text for view types >>>
         if "manually" in view_type:
+            st.info("This option is for advanced users who have their own research and want to express specific beliefs about the market.")
             with st.container(border=True):
                 st.markdown("###### Express Your Manual Investment Views")
                 views['quality_view'] = st.slider("Quality (QUAL) vs. Market (VTI) Outperformance (%)",-5.0,5.0,0.0,0.5)
                 views['small_cap_view'] = st.slider("Small-Cap Value (AVUV) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
                 views['momentum_view'] = st.slider("Momentum (MTUM) vs. Market (VTI) Outperformance (%)", -5.0, 5.0, 0.0, 0.5)
-        else: views = {"auto_views": True}
-    else:
+        else: # Automatic
+            st.info("The app will analyze recent market performance (12-month momentum) to generate data-driven views automatically.")
+            views = {"auto_views": True}
+    else: # Mean-Variance
         use_garch = st.toggle("Use ML-Enhanced Volatility Forecast (GARCH)")
+        # <<< MODIFIED: Added detailed caption for GARCH >>>
+        st.caption(
+            "When OFF, risk is measured using long-term historical volatility. "
+            "When ON, the app uses a machine learning model (GARCH) that reacts more quickly to recent market turbulence, potentially offering better risk management."
+        )
 
+    st.markdown("---")
     if st.button("📈 Build My Portfolio", type="primary"):
         return risk_profile, use_garch, model_choice, views, is_esg, answers
     return "", False, "", {}, False, {}
-
+    
 def display_feedback_form(username: str):
     st.markdown("---")
     with st.expander("✍️ Help Us Improve!"):
